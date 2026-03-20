@@ -163,17 +163,6 @@ class JobMedleyScraper:
 
         # 勤務地: parse from 住所 (e.g. 東京都中央区銀座5-12-6)
         prefecture, city = search_prefecture, search_city
-        addr_match = re.search(r"住所\s*([^\s]+)", text) or re.search(
-            r"([^\s]+[都道府県][^\s]*[市区町村][^\s]*)", text
-        )
-        if addr_match:
-            addr = addr_match.group(1).strip()
-            pref_m = re.match(r"^(.+?[都道府県])", addr)
-            if pref_m:
-                prefecture = pref_m.group(1).strip()
-            city_m = re.search(r"[都道府県]([^\s]+?[市区町村])", addr)
-            if city_m:
-                city = city_m.group(1).strip()
 
         # 職種: 募集職種の該当内容（医師、介護職/ヘルパー、看護師/准看護師等）を取得
         # タイトル「...の〇〇求人」から取得を優先（確実なため）
