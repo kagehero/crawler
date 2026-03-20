@@ -215,17 +215,37 @@ class JobMedleyScraper:
         salary_min = 0 if salary_min is None else salary_min
         salary_max = 0 if salary_max is None else salary_max
 
-        # サービス形態: "診療科目・サービス形態" or "施設・サービス形態"
+        # サービス形態: "診療科目・サービス形態" or "施設・サービス形態" の複数値を取得（表示順を維持）
         service_type = ""
-        for heading_text in ["診療科目・サービス形態", "施設・サービス形態"]:
+        skip_texts = {"応募", "会員登録", "ログイン", "電話", "キープ", "地図", "求人を見る"}
+        link_types: list[str] = []  # 表示順を維持
+        comma_text = ""  # 「整体院、整骨院・接骨院」形式
+        for heading_text in ["診療科目・サービス形態"]:
             for tag in soup.find_all(["h1", "h2", "h3", "h4"]):
-                if heading_text in tag.get_text(strip=True):
-                    a = tag.find_next("a")
-                    if a:
-                        service_type = a.get_text(strip=True)
-                    break
-            if service_type:
+                if heading_text not in tag.get_text(strip=True):
+                    continue
+                for elem in tag.find_all_next():
+                    if elem.name in ("h1", "h2", "h3", "h4") and elem != tag:
+                        break
+                    if elem.name == "a":
+                        txt = elem.get_text(strip=True)
+                        if txt and len(txt) < 50 and not any(s in txt for s in skip_texts) and txt not in link_types:
+                            link_types.append(txt)
+                next_elem = tag.find_next_sibling()
+                if next_elem:
+                    raw = next_elem.get_text(strip=True)
+                    if raw and "、" in raw and len(raw) < 100 and not any(s in raw for s in skip_texts):
+                        comma_text = raw
                 break
+        if comma_text:
+            # リンクテキストと連結している場合を除去（例: 代替医療・リラクゼーション整体院、整骨院・接骨院）
+            for lt in link_types:
+                if comma_text.startswith(lt):
+                    comma_text = comma_text[len(lt) :].lstrip("、 ")
+                    break
+            service_type = comma_text
+        elif link_types:
+            service_type = "、".join(link_types)
         if not service_type:
             a = soup.find(
                 "a",
