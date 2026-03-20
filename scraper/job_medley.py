@@ -2,14 +2,18 @@ from __future__ import annotations
 
 import re
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from typing import Any
+from urllib.request import Request, urlopen
 
 from bs4 import BeautifulSoup
 from playwright.sync_api import sync_playwright
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from config import JOB_MEDLEY_BASE_URL, SCRAPING_USER_AGENT, settings
+
+HTTP_USER_AGENT = SCRAPING_USER_AGENT
 from parser.salary_parser import parse_salary_min_max
 
 
@@ -42,18 +46,20 @@ class JobMedleyScraper:
         request_timeout_ms: int = settings.request_timeout_ms,
         wait_until: str = settings.wait_until,
         throttle_sleep_s: float = settings.throttle_sleep_s,
-        max_pages_per_area: int = settings.max_pages_per_city,
+        job_detail_concurrency: int = settings.job_detail_concurrency,
     ) -> None:
         self.headless = headless
         self.navigation_timeout_ms = navigation_timeout_ms
         self.request_timeout_ms = request_timeout_ms
         self.wait_until = wait_until
         self.throttle_sleep_s = throttle_sleep_s
-        self.max_pages_per_area = max_pages_per_area
+        self.job_detail_concurrency = job_detail_concurrency
 
     def __enter__(self) -> "JobMedleyScraper":
+        print("[ブラウザ] 起動中...", flush=True)
         self._pw = sync_playwright().start()
         self._browser = self._pw.chromium.launch(headless=self.headless)
+        print("[ブラウザ] 準備完了", flush=True)
         self._context = self._browser.new_context(
             user_agent=SCRAPING_USER_AGENT,
             locale="ja-JP",
@@ -81,6 +87,28 @@ class JobMedleyScraper:
 
     def _build_search_url(self, prefecture_id: int, city_id: int, page_no: int) -> str:
         return f"{JOB_MEDLEY_BASE_URL}/search/?prefecture_id={prefecture_id}&city_id={city_id}&page={page_no}"
+
+    def _extract_total_count_from_search_page(self, page) -> int | None:
+        """
+        Extract 該当件数 X件 from search results page.
+        Returns total matching job count, or None if not found.
+        """
+        # Try innerText first (rendered text); fall back to HTML
+        try:
+            text = page.evaluate("() => document.body?.innerText ?? ''")
+        except Exception:
+            text = page.content()
+        m = re.search(r"該当件数\s*(\d+)\s*件", text) or re.search(r"該当件数(\d+)件", text)
+        return int(m.group(1)) if m else None
+
+    def _fetch_job_detail_http(self, job_url: str) -> str | None:
+        """Fetch job detail HTML via HTTP (faster than Playwright)."""
+        try:
+            req = Request(job_url, headers={"User-Agent": HTTP_USER_AGENT})
+            with urlopen(req, timeout=30) as r:
+                return r.read().decode("utf-8")
+        except Exception:
+            return None
 
     def _extract_job_links_from_list(self, page) -> list[str]:
         """
@@ -110,14 +138,26 @@ class JobMedleyScraper:
         page_title = soup.title.get_text(strip=True) if soup.title else ""
         text = soup.get_text(" ", strip=True)
 
-        # 施設名: "法人・施設名" section
+        # 施設名: "法人・施設名" or "事業所名" (ハローワーク求人)
         facility_name = ""
-        for tag in soup.find_all(["h1", "h2", "h3", "h4"]):
-            if "法人・施設名" in tag.get_text(strip=True):
-                a = tag.find_next("a")
-                if a:
-                    facility_name = a.get_text(strip=True)
+        for heading, use_link in [("法人・施設名", True), ("事業所名", False)]:
+            for tag in soup.find_all(["h1", "h2", "h3", "h4"]):
+                if heading in tag.get_text(strip=True):
+                    if use_link:
+                        a = tag.find_next("a")
+                        if a:
+                            facility_name = a.get_text(strip=True)
+                    else:
+                        next_elem = tag.find_next_sibling()
+                        if next_elem:
+                            facility_name = next_elem.get_text(strip=True)
+                    break
+            if facility_name:
                 break
+        if not facility_name:
+            m = re.search(r"^(.+?)の.+求人", page_title)
+            if m:
+                facility_name = m.group(1).strip()
         if not facility_name:
             facility_name = "Unknown"
 
@@ -135,19 +175,41 @@ class JobMedleyScraper:
             if city_m:
                 city = city_m.group(1).strip()
 
-        # 職種: "募集職種" or title "...の医師求人" / "...の介護職/ヘルパー求人"
+        # 職種: 募集職種の該当内容（医師、介護職/ヘルパー、看護師/准看護師等）を取得
+        # タイトル「...の〇〇求人」から取得を優先（確実なため）
         job_type = ""
-        for tag in soup.find_all(["h1", "h2", "h3", "h4"]):
-            if "募集職種" in tag.get_text(strip=True):
-                n = tag.find_next(string=True)
-                if n:
-                    job_type = str(n).strip()
-                break
-        if not job_type:
-            m = re.search(r"の(.+?)求人", page_title)
-            if m:
-                job_type = m.group(1).strip()
-        if not job_type:
+        m = re.search(r"の(.+?)求人", page_title)
+        if m:
+            job_type = m.group(1).strip()
+        if not job_type or job_type == "募集職種":
+            for tag in soup.find_all(["h1", "h2", "h3", "h4"]):
+                if tag.get_text(strip=True) != "募集職種":
+                    continue
+                # 募集内容の「募集職種」直後の要素のテキスト（例: 看護師/准看護師）
+                next_elem = tag.find_next_sibling()
+                if next_elem and next_elem.name not in ("script", "style"):
+                    t = next_elem.get_text(strip=True)
+                    if t and t != "募集職種" and len(t) < 80:
+                        job_type = t
+                        break
+                # 事業所情報の「募集職種」直後のリンク（例: [医師(正職員)]）
+                if not job_type:
+                    next_a = tag.find_next("a", href=re.compile(r"/[a-z]+/\d+"))
+                    if next_a:
+                        txt = next_a.get_text(strip=True)
+                        if txt and "応募" not in txt and "電話" not in txt:
+                            job_type = txt
+                            break
+                # 直後のテキストノードを探索
+                if not job_type:
+                    for s in tag.find_all_next(string=True):
+                        t = str(s).strip()
+                        if t and t != "募集職種" and len(t) < 80 and "求人" not in t:
+                            job_type = t
+                            break
+                if job_type:
+                    break
+        if not job_type or job_type == "募集職種":
             job_type = "Unknown"
 
         # 雇用形態: 【正職員】 or 給与正職員
@@ -199,36 +261,78 @@ class JobMedleyScraper:
 
     def scrape_area(
         self, prefecture_id: int, city_id: int, prefecture: str, city: str
-    ) -> list[dict[str, Any]]:
-        jobs: list[dict[str, Any]] = []
+    ):
+        """
+        Scrape job listings for an area. Yields (page_no, jobs) for each search page
+        so the caller can persist results immediately and avoid data loss.
+        Uses 該当件数 and 全ページ from the search page to determine how many pages to fetch.
+        """
+        total_pages: int | None = None
+        total_count: int | None = None
+        max_page = 9999  # fallback when 該当件数 unavailable; break when no links
+        page_no = 1
 
-        for page_no in range(1, self.max_pages_per_area + 1):
+        while page_no <= max_page:
+            page_jobs: list[dict[str, Any]] = []
             page = self._new_page()
             try:
                 url = self._build_search_url(prefecture_id, city_id, page_no)
                 self._goto(page, url)
                 time.sleep(self.throttle_sleep_s)
 
+                if page_no == 1:
+                    # Wait for 該当件数 to appear (may load after DOM)
+                    try:
+                        page.wait_for_function(
+                            "document.body?.innerText?.includes('該当件数')",
+                            timeout=5000,
+                        )
+                    except Exception:
+                        pass
+                    total_count = self._extract_total_count_from_search_page(page)
+                    if total_count is not None:
+                        print(f"  該当件数: {total_count}件", flush=True)
+
                 job_links = self._extract_job_links_from_list(page)
                 if not job_links:
+                    print(f"  検索ページ {page_no}: 求人なし（終了）", flush=True)
                     break
 
-                for job_url in job_links:
-                    detail_page = self._new_page()
-                    try:
-                        self._goto(detail_page, job_url)
-                        time.sleep(self.throttle_sleep_s)
-                        html = detail_page.content()
-                        job = self._parse_job_detail(
-                            html=html,
-                            job_url=job_url,
-                            search_prefecture=prefecture,
-                            search_city=city,
-                        )
-                        jobs.append(job.__dict__)
-                    finally:
-                        detail_page.close()
+                if page_no == 1 and total_count is not None and job_links:
+                    total_pages = (total_count + len(job_links) - 1) // len(job_links)
+                    max_page = total_pages  # use actual total (no cap)
+                    print(f"  全{total_pages}ページ", flush=True)
+                    print(f"  検索ページ {page_no}/{total_pages}: {url}", flush=True)
+                else:
+                    page_label = f"{page_no}/{total_pages}" if total_pages else str(page_no)
+                    print(f"  検索ページ {page_label}: {url}", flush=True)
+
+                print(f"    → 求人リンク {len(job_links)}件取得", flush=True)
+
+                def fetch_one(args: tuple[int, str]) -> tuple[int, dict[str, Any] | None]:
+                    idx, url = args
+                    html = self._fetch_job_detail_http(url)
+                    if not html:
+                        return idx, None
+                    job = self._parse_job_detail(html, url, prefecture, city)
+                    return idx, job.__dict__
+
+                results: list[dict[str, Any] | None] = [None] * len(job_links)
+                with ThreadPoolExecutor(max_workers=self.job_detail_concurrency) as ex:
+                    futures = {ex.submit(fetch_one, (i, url)): i for i, url in enumerate(job_links)}
+                    for future in as_completed(futures):
+                        idx, job_dict = future.result()
+                        results[idx] = job_dict
+                        if job_dict:
+                            name = (job_dict.get("facility_name") or "")[:25]
+                            if len(job_dict.get("facility_name") or "") > 25:
+                                name += "..."
+                            jt = job_dict.get("job_type", "")
+                            print(f"      [{idx + 1}/{len(job_links)}] {name} | {jt}", flush=True)
+
+                page_jobs = [r for r in results if r is not None]
+                yield page_no, page_jobs
             finally:
                 page.close()
-        return jobs
+            page_no += 1
 

@@ -80,10 +80,16 @@ def load_areas_from_excel(path: str) -> list[tuple[str, str, int, int]]:
     return areas
 
 
+def _safe_filename(s: str) -> str:
+    """Replace characters unsafe for filenames."""
+    return re.sub(r'[/\\:*?"<>|]', "_", s)
+
+
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--input", default="site URL")
     parser.add_argument("--output", default="data/output.csv")
+    parser.add_argument("--output-dir", default="data/pages", help="Directory for per-page CSV files")
     parser.add_argument("--max-areas", type=int, default=None)
     parser.add_argument("--excel", action="store_true", help="Use Excel input (resolve city_id via API)")
     args = parser.parse_args(argv)
@@ -100,6 +106,9 @@ def main(argv: list[str]) -> int:
     if args.max_areas is not None:
         areas = areas[: args.max_areas]
 
+    output_dir = Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    print(f"[開始] 入力: {input_path}, 出力: {args.output}, ページ別: {output_dir}/, 対象地域: {len(areas)}件", flush=True)
     scraped_at = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
 
     scraper = JobMedleyScraper(
@@ -108,28 +117,36 @@ def main(argv: list[str]) -> int:
         request_timeout_ms=settings.request_timeout_ms,
         wait_until=settings.wait_until,
         throttle_sleep_s=settings.throttle_sleep_s,
-        max_pages_per_area=settings.max_pages_per_city,
     )
 
     all_jobs: list[dict] = []
     with scraper:
-        for pref, city, pref_id, city_id in areas:
-            sys.stdout.write(f"Scraping: {pref} / {city}\n")
-            sys.stdout.flush()
-            jobs = scraper.scrape_area(
+        for i, (pref, city, pref_id, city_id) in enumerate(areas, 1):
+            print(f"\n[{i}/{len(areas)}] 地域: {pref} / {city}", flush=True)
+            area_label = _safe_filename(f"{pref}_{city}")
+            area_count = 0
+            for page_no, page_jobs in scraper.scrape_area(
                 prefecture_id=pref_id,
                 city_id=city_id,
                 prefecture=pref,
                 city=city,
-            )
-            for j in jobs:
-                j["scraped_at"] = scraped_at
-                m = re.search(r"job-medley\.com/[a-z]+/(?:hw/)?(\d+)", j.get("job_url", ""))
-                j["job_id"] = m.group(1) if m else ""
-            all_jobs.extend(jobs)
+            ):
+                for j in page_jobs:
+                    j["scraped_at"] = scraped_at
+                    m = re.search(r"job-medley\.com/[a-z]+/(?:hw/)?(\d+)", j.get("job_url", ""))
+                    j["job_id"] = m.group(1) if m else ""
+                page_path = output_dir / f"{i:03d}_{area_label}_page_{page_no:03d}.csv"
+                export_jobs_to_csv(page_jobs, str(page_path), encoding=settings.csv_encoding)
+                print(f"    → 保存: {page_path} ({len(page_jobs)}件)", flush=True)
+                all_jobs.extend(page_jobs)
+                area_count += len(page_jobs)
+            print(f"  → 地域合計: {area_count}件", flush=True)
 
+    before_dedup = len(all_jobs)
     all_jobs = deduplicate_jobs(all_jobs, dedup_key=settings.dedup_key)
+    print(f"\n[完了] 重複除去: {before_dedup}件 → {len(all_jobs)}件", flush=True)
     export_jobs_to_csv(all_jobs, args.output, encoding=settings.csv_encoding)
+    print(f"[出力] {args.output}", flush=True)
     return 0
 
 

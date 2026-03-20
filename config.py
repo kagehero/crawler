@@ -15,18 +15,16 @@ class Settings:
     request_timeout_ms: int = 45_000
     wait_until: str = "domcontentloaded"
 
-    # Rate limiting (basic)
-    throttle_sleep_s: float = 1.0
-
-    # Pagination (MVP: stop when no more job links)
-    max_pages_per_city: int = 20
+    # Rate limiting: Playwright用 / 並列数
+    throttle_sleep_s: float = 0.3
+    job_detail_concurrency: int = 5  # 求人詳細の並列取得数
 
     # Deduplication
     # Prefer job_url (spec requirement); fall back to job_id if needed later.
     dedup_key: str = "job_url"
 
-    # CSV
-    csv_encoding: str = "utf-8"
+    # CSV: utf-8-sig adds BOM so Excel recognizes UTF-8 and displays Japanese correctly
+    csv_encoding: str = "utf-8-sig"
 
 
 settings = Settings()
