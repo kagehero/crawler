@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import re
 import sys
-from datetime import datetime, timezone
 from pathlib import Path
 
 import pandas as pd
@@ -109,7 +108,6 @@ def main(argv: list[str]) -> int:
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     print(f"[開始] 入力: {input_path}, 出力: {args.output}, ページ別: {output_dir}/, 対象地域: {len(areas)}件", flush=True)
-    scraped_at = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
 
     scraper = JobMedleyScraper(
         headless=settings.headless,
@@ -132,7 +130,6 @@ def main(argv: list[str]) -> int:
                 city=city,
             ):
                 for j in page_jobs:
-                    j["scraped_at"] = scraped_at
                     m = re.search(r"job-medley\.com/[a-z]+/(?:hw/)?(\d+)", j.get("job_url", ""))
                     j["job_id"] = m.group(1) if m else ""
                 page_path = output_dir / f"{i:03d}_{area_label}_page_{page_no:03d}.csv"
