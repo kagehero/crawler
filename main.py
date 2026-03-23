@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 import re
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 import pandas as pd
@@ -11,13 +11,22 @@ import pandas as pd
 from config import settings
 from exporter.csv_exporter import export_jobs_to_csv
 from scraper.job_medley import JobMedleyScraper
+from scraper.wellme_job import scrape_wellme_area
 from utils.dedup import deduplicate_jobs
 
 
-def load_areas_from_site_url_file(path: str) -> list[tuple[str, str, int, int]]:
+def _detect_scraper(url: str) -> str:
+    """Return 'job_medley' or 'wellme' based on URL domain."""
+    if "kaigojob.com" in url:
+        return "wellme"
+    return "job_medley"
+
+
+def load_areas_from_site_url_file(path: str) -> list[tuple[str, str, str, str]]:
     """
-    Load (prefecture, city, prefecture_id, city_id) from TSV:
+    Load (prefecture, city, url, scraper_type) from TSV:
       prefecture  city  url
+    Supports job-medley.com and kaigojob.com URLs.
     """
     df = pd.read_csv(path, sep="\t", header=None, names=["prefecture", "city", "url"])
     df = df.dropna(subset=["prefecture", "city", "url"])
@@ -26,10 +35,15 @@ def load_areas_from_site_url_file(path: str) -> list[tuple[str, str, int, int]]:
         pref = str(row["prefecture"]).strip()
         city = str(row["city"]).strip()
         url = str(row["url"]).strip()
-        m = re.search(r"prefecture_id=(\d+)", url)
-        m2 = re.search(r"city_id=(\d+)", url)
-        if m and m2:
-            areas.append((pref, city, int(m.group(1)), int(m2.group(1))))
+        if not url:
+            continue
+        scraper = _detect_scraper(url)
+        if scraper == "job_medley":
+            m = re.search(r"prefecture_id=(\d+)", url)
+            m2 = re.search(r"city_id=(\d+)", url)
+            if not (m and m2):
+                continue
+        areas.append((pref, city, url, scraper))
     return areas
 
 
@@ -109,38 +123,62 @@ def main(argv: list[str]) -> int:
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     print(f"[開始] 入力: {input_path}, 出力: {args.output}, ページ別: {output_dir}/, 対象地域: {len(areas)}件", flush=True)
-    acquisition_date = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
-
-    scraper = JobMedleyScraper(
-        headless=settings.headless,
-        navigation_timeout_ms=settings.navigation_timeout_ms,
-        request_timeout_ms=settings.request_timeout_ms,
-        wait_until=settings.wait_until,
-        throttle_sleep_s=settings.throttle_sleep_s,
-    )
+    jst = timezone(timedelta(hours=9))
+    acquisition_date = datetime.now(jst).isoformat(timespec="seconds")
 
     all_jobs: list[dict] = []
-    with scraper:
-        for i, (pref, city, pref_id, city_id) in enumerate(areas, 1):
-            print(f"\n[{i}/{len(areas)}] 地域: {pref} / {city}", flush=True)
-            area_label = _safe_filename(f"{pref}_{city}")
-            area_count = 0
-            for page_no, page_jobs in scraper.scrape_area(
-                prefecture_id=pref_id,
-                city_id=city_id,
-                prefecture=pref,
-                city=city,
-            ):
-                for j in page_jobs:
-                    j["acquisition_date"] = acquisition_date
-                    m = re.search(r"job-medley\.com/[a-z]+/(?:hw/)?(\d+)", j.get("job_url", ""))
-                    j["job_id"] = m.group(1) if m else ""
-                page_path = output_dir / f"{i:03d}_{area_label}_page_{page_no:03d}.csv"
-                export_jobs_to_csv(page_jobs, str(page_path), encoding=settings.csv_encoding)
-                print(f"    → 保存: {page_path} ({len(page_jobs)}件)", flush=True)
-                all_jobs.extend(page_jobs)
-                area_count += len(page_jobs)
-            print(f"  → 地域合計: {area_count}件", flush=True)
+
+    job_medley_areas = [(p, c, u) for p, c, u, s in areas if s == "job_medley"]
+    wellme_areas = [(p, c, u) for p, c, u, s in areas if s == "wellme"]
+
+    if job_medley_areas:
+        scraper = JobMedleyScraper(
+            headless=settings.headless,
+            navigation_timeout_ms=settings.navigation_timeout_ms,
+            request_timeout_ms=settings.request_timeout_ms,
+            wait_until=settings.wait_until,
+            throttle_sleep_s=settings.throttle_sleep_s,
+        )
+        with scraper:
+            for i, (pref, city, url) in enumerate(job_medley_areas, 1):
+                m = re.search(r"prefecture_id=(\d+)", url)
+                m2 = re.search(r"city_id=(\d+)", url)
+                if not (m and m2):
+                    continue
+                pref_id, city_id = int(m.group(1)), int(m2.group(1))
+                print(f"\n[{i}/{len(job_medley_areas)}] [job-medley] 地域: {pref} / {city}", flush=True)
+                area_label = _safe_filename(f"{pref}_{city}")
+                area_count = 0
+                for page_no, page_jobs in scraper.scrape_area(
+                    prefecture_id=pref_id,
+                    city_id=city_id,
+                    prefecture=pref,
+                    city=city,
+                ):
+                    for j in page_jobs:
+                        j["acquisition_date"] = acquisition_date
+                        mid = re.search(r"job-medley\.com/[a-z]+/(?:hw/)?(\d+)", j.get("job_url", ""))
+                        j["job_id"] = mid.group(1) if mid else j.get("job_id", "")
+                    page_path = output_dir / f"{i:03d}_{area_label}_page_{page_no:03d}.csv"
+                    export_jobs_to_csv(page_jobs, str(page_path), encoding=settings.csv_encoding)
+                    print(f"    → 保存: {page_path} ({len(page_jobs)}件)", flush=True)
+                    all_jobs.extend(page_jobs)
+                    area_count += len(page_jobs)
+                print(f"  → 地域合計: {area_count}件", flush=True)
+
+    for i, (pref, city, url) in enumerate(wellme_areas, len(job_medley_areas) + 1):
+        print(f"\n[{i}/{len(areas)}] [WellMe Job] 地域: {pref} / {city}", flush=True)
+        area_label = _safe_filename(f"{pref}_{city}")
+        area_count = 0
+        for page_no, page_jobs in scrape_wellme_area(url, pref, city):
+            for j in page_jobs:
+                j["acquisition_date"] = acquisition_date
+            page_path = output_dir / f"{i:03d}_{area_label}_page_{page_no:03d}.csv"
+            export_jobs_to_csv(page_jobs, str(page_path), encoding=settings.csv_encoding)
+            print(f"    → 保存: {page_path} ({len(page_jobs)}件)", flush=True)
+            all_jobs.extend(page_jobs)
+            area_count += len(page_jobs)
+        print(f"  → 地域合計: {area_count}件", flush=True)
 
     before_dedup = len(all_jobs)
     all_jobs = deduplicate_jobs(all_jobs, dedup_key=settings.dedup_key)
