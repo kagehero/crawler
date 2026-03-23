@@ -17,6 +17,7 @@ OUTPUT_COLUMNS = [
     "service_type",
     "job_url",
     "job_id",
+    "acquisition_date",  # データ取得日
 ]
 
 
