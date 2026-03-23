@@ -14,6 +14,7 @@ OUTPUT_COLUMNS = [
     "employment_type",
     "salary_min",
     "salary_max",
+    "payment_method",  # 支給方法（月給/時給/日給/年収）
     "service_type",
     "job_url",
     "job_id",

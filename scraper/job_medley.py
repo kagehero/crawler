@@ -14,12 +14,12 @@ from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_ex
 from config import JOB_MEDLEY_BASE_URL, SCRAPING_USER_AGENT, settings
 
 HTTP_USER_AGENT = SCRAPING_USER_AGENT
-from parser.salary_parser import parse_salary_min_max
+from parser.salary_parser import parse_payment_method, parse_salary_min_max
 
 
 @dataclass(frozen=True)
 class JobMedleyJob:
-    """Extracted fields per user spec: 施設名, 勤務地, 職種, 雇用形態, 給与, サービス形態."""
+    """Extracted fields per user spec: 施設名, 勤務地, 職種, 雇用形態, 給与, 支給方法, サービス形態."""
 
     facility_name: str  # 施設名
     prefecture: str  # 勤務地 都道府県
@@ -28,6 +28,7 @@ class JobMedleyJob:
     employment_type: str  # 雇用形態
     salary_min: int | None  # 給与 下限
     salary_max: int | None  # 給与 上限
+    payment_method: str  # 支給方法（月給/時給/日給/年収）
     service_type: str  # サービス形態
     job_url: str
 
@@ -165,41 +166,38 @@ class JobMedleyScraper:
         prefecture, city = search_prefecture, search_city
 
         # 職種: 募集職種の該当内容（医師、介護職/ヘルパー、看護師/准看護師等）を取得
-        # タイトル「...の〇〇求人」から取得を優先（確実なため）
+        # 「募集職種」セクションを最優先、取れなければタイトルから取得
         job_type = ""
-        m = re.search(r"の(.+?)求人", page_title)
-        if m:
-            job_type = m.group(1).strip()
-        if not job_type or job_type == "募集職種":
-            for tag in soup.find_all(["h1", "h2", "h3", "h4"]):
-                if tag.get_text(strip=True) != "募集職種":
-                    continue
-                # 募集内容の「募集職種」直後の要素のテキスト（例: 看護師/准看護師）
-                next_elem = tag.find_next_sibling()
-                if next_elem and next_elem.name not in ("script", "style"):
-                    t = next_elem.get_text(strip=True)
-                    if t and t != "募集職種" and len(t) < 80:
+        for tag in soup.find_all(["h1", "h2", "h3", "h4"]):
+            if tag.get_text(strip=True) != "募集職種":
+                continue
+            # 募集内容の「募集職種」直後の要素のテキスト（例: 看護師/准看護師）
+            next_elem = tag.find_next_sibling()
+            if next_elem and next_elem.name not in ("script", "style"):
+                t = next_elem.get_text(strip=True)
+                if t and t != "募集職種" and len(t) < 80:
+                    job_type = t
+                    break
+            # 事業所情報の「募集職種」直後のリンク（例: [医師(正職員)]）
+            if not job_type:
+                next_a = tag.find_next("a", href=re.compile(r"/[a-z]+/\d+"))
+                if next_a:
+                    txt = next_a.get_text(strip=True)
+                    if txt and "応募" not in txt and "電話" not in txt:
+                        job_type = txt
+                        break
+            # 直後のテキストノードを探索
+            if not job_type:
+                for s in tag.find_all_next(string=True):
+                    t = str(s).strip()
+                    if t and t != "募集職種" and len(t) < 80 and "求人" not in t:
                         job_type = t
                         break
-                # 事業所情報の「募集職種」直後のリンク（例: [医師(正職員)]）
-                if not job_type:
-                    next_a = tag.find_next("a", href=re.compile(r"/[a-z]+/\d+"))
-                    if next_a:
-                        txt = next_a.get_text(strip=True)
-                        if txt and "応募" not in txt and "電話" not in txt:
-                            job_type = txt
-                            break
-                # 直後のテキストノードを探索
-                if not job_type:
-                    for s in tag.find_all_next(string=True):
-                        t = str(s).strip()
-                        if t and t != "募集職種" and len(t) < 80 and "求人" not in t:
-                            job_type = t
-                            break
-                if job_type:
-                    break
+            if job_type:
+                break
         if not job_type or job_type == "募集職種":
-            job_type = "Unknown"
+            m = re.search(r"の(.+?)求人", page_title)
+            job_type = m.group(1).strip() if m and m.group(1).strip() != "募集職種" else "Unknown"
 
         # 雇用形態: 【正職員】 or 給与正職員
         employment_type = ""
@@ -210,10 +208,11 @@ class JobMedleyScraper:
             m = re.search(r"給与\s*(正職員|契約職員|パート・バイト|業務委託)", text)
             employment_type = m.group(1) if m else "Unknown"
 
-        # 給与（下限/上限）
+        # 給与（下限/上限）・支給方法
         salary_min, salary_max = parse_salary_min_max(text)
         salary_min = 0 if salary_min is None else salary_min
         salary_max = 0 if salary_max is None else salary_max
+        payment_method = parse_payment_method(text)
 
         # サービス形態: "診療科目・サービス形態" or "施設・サービス形態" の複数値を取得（表示順を維持）
         service_type = ""
@@ -264,6 +263,7 @@ class JobMedleyScraper:
             employment_type=employment_type,
             salary_min=salary_min,
             salary_max=salary_max,
+            payment_method=payment_method,
             service_type=service_type,
             job_url=job_url,
         )

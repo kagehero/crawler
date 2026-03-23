@@ -14,7 +14,7 @@ from urllib.request import Request, urlopen
 from bs4 import BeautifulSoup
 
 from config import settings
-from parser.salary_parser import parse_salary_min_max
+from parser.salary_parser import parse_payment_method, parse_salary_min_max
 
 WELLME_BASE = "https://www.kaigojob.com"
 USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0 Safari/537.36"
@@ -121,6 +121,7 @@ def _parse_job_detail(html: str, job_url: str, search_prefecture: str, search_ci
     salary_min, salary_max = parse_salary_min_max(text)
     salary_min = salary_min or 0
     salary_max = salary_max or 0
+    payment_method = parse_payment_method(text)
 
     service_type = ""
     for tag in soup.find_all(["dt", "th"]):
@@ -157,6 +158,7 @@ def _parse_job_detail(html: str, job_url: str, search_prefecture: str, search_ci
         "employment_type": employment_type,
         "salary_min": salary_min,
         "salary_max": salary_max,
+        "payment_method": payment_method,
         "service_type": service_type,
         "job_url": job_url,
         "job_id": job_id,
