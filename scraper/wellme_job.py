@@ -1,7 +1,7 @@
 """
 WellMe Job (kaigojob.com / ウェルミージョブ) scraper.
 Extracts same fields as job-medley: facility_name, prefecture, city, job_type,
-employment_type, salary_min, salary_max, service_type, job_url, job_id.
+employment_type, salary_min, salary_max, service_type, job_url.
 """
 from __future__ import annotations
 
@@ -95,6 +95,10 @@ def _parse_job_detail(html: str, job_url: str, search_prefecture: str, search_ci
             prefecture = m.group(1).strip()
             city = m.group(2).strip()
 
+    # 都道府県：郵便番号付き（〒104-0033東京都）の場合は都道府県名のみに整える
+    if prefecture:
+        prefecture = re.sub(r"^〒[\d\-]+\s*", "", prefecture).strip()
+
     job_type = "介護職員・ヘルパー"
     for tag in soup.find_all(["dt", "th"]):
         if tag.get_text(strip=True) == "職種名":
@@ -141,19 +145,11 @@ def _parse_job_detail(html: str, job_url: str, search_prefecture: str, search_ci
                 service_type = kw
                 break
 
-    job_id = ""
-    m = re.search(r"job-postings-(\d+)", job_url)
-    if m:
-        job_id = m.group(1)
-    if not job_id:
-        jm = re.search(r"求人広告番号\s*(\d+)", text)
-        if jm:
-            job_id = jm.group(1)
-
     return {
         "facility_name": facility_name,
         "prefecture": prefecture,
         "city": city,
+        "job_category": "介護職員・ヘルパー",  # care-worker 固定
         "job_type": job_type,
         "employment_type": employment_type,
         "salary_min": salary_min,
@@ -161,7 +157,6 @@ def _parse_job_detail(html: str, job_url: str, search_prefecture: str, search_ci
         "payment_method": payment_method,
         "service_type": service_type,
         "job_url": job_url,
-        "job_id": job_id,
     }
 
 

@@ -17,18 +17,84 @@ HTTP_USER_AGENT = SCRAPING_USER_AGENT
 from parser.salary_parser import parse_payment_method, parse_salary_min_max
 
 
+# URL path → 職種（固定選択肢）
+# Sourced from https://job-medley.com/ occupation links; includes cra (臨床開発モニター) from /cra/ listings.
+JOB_MEDLEY_PATH_TO_CATEGORY = {
+    "acu": "鍼灸師",
+    "ans": "看護師/准看護師",
+    "apl": "児童指導員/指導員",
+    "apo": "薬剤師",
+    "asc": "放課後児童支援員/学童指導員",
+    "acw": "保育補助",
+    "ba": "美容部員",
+    "bar": "理容師",
+    "bwt": "整体師",
+    "cc": "介護事務",
+    "ce": "臨床工学技士",
+    "ck": "調理師/調理スタッフ",
+    "clr": "清掃/環境整備",
+    "cm": "ケアマネジャー",
+    "cp": "公認心理師/臨床心理士",
+    "cra": "臨床開発モニター",
+    "crc": "治験コーディネーター",
+    "csw": "医療ソーシャルワーカー",
+    "ctd": "介護タクシー/ドライバー",
+    "cw": "保育士",
+    "da": "歯科助手",
+    "dcm": "サービス管理責任者",
+    "dds": "歯科医師",
+    "dh": "歯科衛生士",
+    "dm": "相談支援専門員",
+    "dr": "医師",
+    "drv": "ドライバー/配達員",
+    "dt": "歯科技工士",
+    "etc": "総合職/新卒/その他",
+    "est": "エステティシャン/セラピスト",
+    "et": "アイリスト",
+    "fss": "福祉用具専門相談員",
+    "hh": "介護職/ヘルパー",
+    "hs": "美容師",
+    "ins": "インストラクター",
+    "jdr": "柔道整復師",
+    "km": "サービス提供責任者",
+    "kt": "幼稚園教諭",
+    "la": "生活相談員",
+    "ls": "生活支援員",
+    "mas": "あん摩マッサージ指圧師",
+    "mc": "医療事務/受付",
+    "mg": "管理職（介護）",
+    "mn": "助産師",
+    "mt": "臨床検査技師",
+    "na": "看護助手",
+    "nm": "児童発達支援管理責任者",
+    "nrd": "管理栄養士/栄養士",
+    "nt": "ネイリスト",
+    "ort": "視能訓練士",
+    "ot": "作業療法士",
+    "otc": "登録販売者",
+    "ow": "一般事務/管理部門",
+    "pc": "調剤事務",
+    "phn": "保健師",
+    "pt": "理学療法士",
+    "rt": "診療放射線技師",
+    "sr": "営業",
+    "st": "言語聴覚士",
+}
+
+
 @dataclass(frozen=True)
 class JobMedleyJob:
-    """Extracted fields per user spec: 施設名, 勤務地, 職種, 雇用形態, 給与, 支給方法, サービス形態."""
+    """Extracted fields: 施設名, 勤務地, 職種(固定), 職種名(自由), 雇用形態, 給与, 支給方法, サービス形態."""
 
     facility_name: str  # 施設名
     prefecture: str  # 勤務地 都道府県
     city: str  # 勤務地 市区町村
-    job_type: str  # 職種
+    job_category: str  # 職種（固定選択肢・検索用）
+    job_type: str  # 職種名（自由表記）
     employment_type: str  # 雇用形態
     salary_min: int | None  # 給与 下限
     salary_max: int | None  # 給与 上限
-    payment_method: str  # 支給方法（月給/時給/日給/年収）
+    payment_method: str  # 支給方法
     service_type: str  # サービス形態
     job_url: str
 
@@ -199,6 +265,12 @@ class JobMedleyScraper:
             m = re.search(r"の(.+?)求人", page_title)
             job_type = m.group(1).strip() if m and m.group(1).strip() != "募集職種" else "Unknown"
 
+        # 職種（固定選択肢）: URL path から取得（例: /hh/ → 介護職/ヘルパー）
+        job_category = ""
+        path_m = re.search(r"job-medley\.com/([a-z]+)/", job_url)
+        if path_m:
+            job_category = JOB_MEDLEY_PATH_TO_CATEGORY.get(path_m.group(1), "")
+
         # 雇用形態: 【正職員】 or 給与正職員
         employment_type = ""
         m = re.search(r"【(正職員|契約職員|パート・バイト|業務委託)】", text)
@@ -259,6 +331,7 @@ class JobMedleyScraper:
             facility_name=facility_name,
             prefecture=prefecture,
             city=city,
+            job_category=job_category,
             job_type=job_type,
             employment_type=employment_type,
             salary_min=salary_min,

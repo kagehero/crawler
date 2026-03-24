@@ -157,8 +157,6 @@ def main(argv: list[str]) -> int:
                 ):
                     for j in page_jobs:
                         j["acquisition_date"] = acquisition_date
-                        mid = re.search(r"job-medley\.com/[a-z]+/(?:hw/)?(\d+)", j.get("job_url", ""))
-                        j["job_id"] = mid.group(1) if mid else j.get("job_id", "")
                     page_path = output_dir / f"{i:03d}_{area_label}_page_{page_no:03d}.csv"
                     export_jobs_to_csv(page_jobs, str(page_path), encoding=settings.csv_encoding)
                     print(f"    → 保存: {page_path} ({len(page_jobs)}件)", flush=True)
