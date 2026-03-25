@@ -14,20 +14,87 @@ from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_ex
 from config import JOB_MEDLEY_BASE_URL, SCRAPING_USER_AGENT, settings
 
 HTTP_USER_AGENT = SCRAPING_USER_AGENT
-from parser.salary_parser import parse_salary_min_max
+from parser.salary_parser import parse_payment_method, parse_salary_min_max
+
+
+# URL path → 職種（固定選択肢）
+# Sourced from https://job-medley.com/ occupation links; includes cra (臨床開発モニター) from /cra/ listings.
+JOB_MEDLEY_PATH_TO_CATEGORY = {
+    "acu": "鍼灸師",
+    "ans": "看護師/准看護師",
+    "apl": "児童指導員/指導員",
+    "apo": "薬剤師",
+    "asc": "放課後児童支援員/学童指導員",
+    "acw": "保育補助",
+    "ba": "美容部員",
+    "bar": "理容師",
+    "bwt": "整体師",
+    "cc": "介護事務",
+    "ce": "臨床工学技士",
+    "ck": "調理師/調理スタッフ",
+    "clr": "清掃/環境整備",
+    "cm": "ケアマネジャー",
+    "cp": "公認心理師/臨床心理士",
+    "cra": "臨床開発モニター",
+    "crc": "治験コーディネーター",
+    "csw": "医療ソーシャルワーカー",
+    "ctd": "介護タクシー/ドライバー",
+    "cw": "保育士",
+    "da": "歯科助手",
+    "dcm": "サービス管理責任者",
+    "dds": "歯科医師",
+    "dh": "歯科衛生士",
+    "dm": "相談支援専門員",
+    "dr": "医師",
+    "drv": "ドライバー/配達員",
+    "dt": "歯科技工士",
+    "etc": "総合職/新卒/その他",
+    "est": "エステティシャン/セラピスト",
+    "et": "アイリスト",
+    "fss": "福祉用具専門相談員",
+    "hh": "介護職/ヘルパー",
+    "hs": "美容師",
+    "ins": "インストラクター",
+    "jdr": "柔道整復師",
+    "km": "サービス提供責任者",
+    "kt": "幼稚園教諭",
+    "la": "生活相談員",
+    "ls": "生活支援員",
+    "mas": "あん摩マッサージ指圧師",
+    "mc": "医療事務/受付",
+    "mg": "管理職（介護）",
+    "mn": "助産師",
+    "mt": "臨床検査技師",
+    "na": "看護助手",
+    "nm": "児童発達支援管理責任者",
+    "nrd": "管理栄養士/栄養士",
+    "nt": "ネイリスト",
+    "ort": "視能訓練士",
+    "ot": "作業療法士",
+    "otc": "登録販売者",
+    "ow": "一般事務/管理部門",
+    "pc": "調剤事務",
+    "phn": "保健師",
+    "pt": "理学療法士",
+    "rt": "診療放射線技師",
+    "sr": "営業",
+    "st": "言語聴覚士",
+}
 
 
 @dataclass(frozen=True)
 class JobMedleyJob:
-    """Extracted fields per user spec: 施設名, 勤務地, 職種, 雇用形態, 給与, サービス形態."""
+    """Extracted fields: 施設名, 勤務地, 職種(固定), 職種名(自由), 雇用形態, 給与, 支給方法, サービス形態."""
 
     facility_name: str  # 施設名
     prefecture: str  # 勤務地 都道府県
     city: str  # 勤務地 市区町村
-    job_type: str  # 職種
+    job_category: str  # 職種（固定選択肢・検索用）
+    job_type: str  # 職種名（自由表記）
     employment_type: str  # 雇用形態
     salary_min: int | None  # 給与 下限
     salary_max: int | None  # 給与 上限
+    payment_method: str  # 支給方法
     service_type: str  # サービス形態
     job_url: str
 
@@ -163,54 +230,46 @@ class JobMedleyScraper:
 
         # 勤務地: parse from 住所 (e.g. 東京都中央区銀座5-12-6)
         prefecture, city = search_prefecture, search_city
-        addr_match = re.search(r"住所\s*([^\s]+)", text) or re.search(
-            r"([^\s]+[都道府県][^\s]*[市区町村][^\s]*)", text
-        )
-        if addr_match:
-            addr = addr_match.group(1).strip()
-            pref_m = re.match(r"^(.+?[都道府県])", addr)
-            if pref_m:
-                prefecture = pref_m.group(1).strip()
-            city_m = re.search(r"[都道府県]([^\s]+?[市区町村])", addr)
-            if city_m:
-                city = city_m.group(1).strip()
 
         # 職種: 募集職種の該当内容（医師、介護職/ヘルパー、看護師/准看護師等）を取得
-        # タイトル「...の〇〇求人」から取得を優先（確実なため）
+        # 「募集職種」セクションを最優先、取れなければタイトルから取得
         job_type = ""
-        m = re.search(r"の(.+?)求人", page_title)
-        if m:
-            job_type = m.group(1).strip()
-        if not job_type or job_type == "募集職種":
-            for tag in soup.find_all(["h1", "h2", "h3", "h4"]):
-                if tag.get_text(strip=True) != "募集職種":
-                    continue
-                # 募集内容の「募集職種」直後の要素のテキスト（例: 看護師/准看護師）
-                next_elem = tag.find_next_sibling()
-                if next_elem and next_elem.name not in ("script", "style"):
-                    t = next_elem.get_text(strip=True)
-                    if t and t != "募集職種" and len(t) < 80:
+        for tag in soup.find_all(["h1", "h2", "h3", "h4"]):
+            if tag.get_text(strip=True) != "募集職種":
+                continue
+            # 募集内容の「募集職種」直後の要素のテキスト（例: 看護師/准看護師）
+            next_elem = tag.find_next_sibling()
+            if next_elem and next_elem.name not in ("script", "style"):
+                t = next_elem.get_text(strip=True)
+                if t and t != "募集職種" and len(t) < 80:
+                    job_type = t
+                    break
+            # 事業所情報の「募集職種」直後のリンク（例: [医師(正職員)]）
+            if not job_type:
+                next_a = tag.find_next("a", href=re.compile(r"/[a-z]+/\d+"))
+                if next_a:
+                    txt = next_a.get_text(strip=True)
+                    if txt and "応募" not in txt and "電話" not in txt:
+                        job_type = txt
+                        break
+            # 直後のテキストノードを探索
+            if not job_type:
+                for s in tag.find_all_next(string=True):
+                    t = str(s).strip()
+                    if t and t != "募集職種" and len(t) < 80 and "求人" not in t:
                         job_type = t
                         break
-                # 事業所情報の「募集職種」直後のリンク（例: [医師(正職員)]）
-                if not job_type:
-                    next_a = tag.find_next("a", href=re.compile(r"/[a-z]+/\d+"))
-                    if next_a:
-                        txt = next_a.get_text(strip=True)
-                        if txt and "応募" not in txt and "電話" not in txt:
-                            job_type = txt
-                            break
-                # 直後のテキストノードを探索
-                if not job_type:
-                    for s in tag.find_all_next(string=True):
-                        t = str(s).strip()
-                        if t and t != "募集職種" and len(t) < 80 and "求人" not in t:
-                            job_type = t
-                            break
-                if job_type:
-                    break
+            if job_type:
+                break
         if not job_type or job_type == "募集職種":
-            job_type = "Unknown"
+            m = re.search(r"の(.+?)求人", page_title)
+            job_type = m.group(1).strip() if m and m.group(1).strip() != "募集職種" else "Unknown"
+
+        # 職種（固定選択肢）: URL path から取得（例: /hh/ → 介護職/ヘルパー）
+        job_category = ""
+        path_m = re.search(r"job-medley\.com/([a-z]+)/", job_url)
+        if path_m:
+            job_category = JOB_MEDLEY_PATH_TO_CATEGORY.get(path_m.group(1), "")
 
         # 雇用形態: 【正職員】 or 給与正職員
         employment_type = ""
@@ -221,22 +280,43 @@ class JobMedleyScraper:
             m = re.search(r"給与\s*(正職員|契約職員|パート・バイト|業務委託)", text)
             employment_type = m.group(1) if m else "Unknown"
 
-        # 給与（下限/上限）
+        # 給与（下限/上限）・支給方法
         salary_min, salary_max = parse_salary_min_max(text)
         salary_min = 0 if salary_min is None else salary_min
         salary_max = 0 if salary_max is None else salary_max
+        payment_method = parse_payment_method(text)
 
-        # サービス形態: "診療科目・サービス形態" or "施設・サービス形態"
+        # サービス形態: "診療科目・サービス形態" or "施設・サービス形態" の複数値を取得（表示順を維持）
         service_type = ""
-        for heading_text in ["診療科目・サービス形態", "施設・サービス形態"]:
+        skip_texts = {"応募", "会員登録", "ログイン", "電話", "キープ", "地図", "求人を見る"}
+        link_types: list[str] = []  # 表示順を維持
+        comma_text = ""  # 「整体院、整骨院・接骨院」形式
+        for heading_text in ["診療科目・サービス形態"]:
             for tag in soup.find_all(["h1", "h2", "h3", "h4"]):
-                if heading_text in tag.get_text(strip=True):
-                    a = tag.find_next("a")
-                    if a:
-                        service_type = a.get_text(strip=True)
-                    break
-            if service_type:
+                if heading_text not in tag.get_text(strip=True):
+                    continue
+                for elem in tag.find_all_next():
+                    if elem.name in ("h1", "h2", "h3", "h4") and elem != tag:
+                        break
+                    if elem.name == "a":
+                        txt = elem.get_text(strip=True)
+                        if txt and len(txt) < 50 and not any(s in txt for s in skip_texts) and txt not in link_types:
+                            link_types.append(txt)
+                next_elem = tag.find_next_sibling()
+                if next_elem:
+                    raw = next_elem.get_text(strip=True)
+                    if raw and "、" in raw and len(raw) < 100 and not any(s in raw for s in skip_texts):
+                        comma_text = raw
                 break
+        if comma_text:
+            # リンクテキストと連結している場合を除去（例: 代替医療・リラクゼーション整体院、整骨院・接骨院）
+            for lt in link_types:
+                if comma_text.startswith(lt):
+                    comma_text = comma_text[len(lt) :].lstrip("、 ")
+                    break
+            service_type = comma_text
+        elif link_types:
+            service_type = "、".join(link_types)
         if not service_type:
             a = soup.find(
                 "a",
@@ -251,10 +331,12 @@ class JobMedleyScraper:
             facility_name=facility_name,
             prefecture=prefecture,
             city=city,
+            job_category=job_category,
             job_type=job_type,
             employment_type=employment_type,
             salary_min=salary_min,
             salary_max=salary_max,
+            payment_method=payment_method,
             service_type=service_type,
             job_url=job_url,
         )
