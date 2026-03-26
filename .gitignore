@@ -11,10 +11,18 @@ env/
 .eggs/
 dist/
 build/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
 
-# Output
-data/output.csv
-data/pages/*.csv
+# スクレイプ出力・生成 CSV（リポジトリに含めない）
+# ルート直下の旧 data/（README.md のみ追跡可）
+data/output*.csv
+data/pages/
+
+# 正規の出力先（crawler 側）
+crawler/data/output*.csv
+crawler/data/pages/
 
 # Playwright
 .playwright/
@@ -27,10 +35,15 @@ test-results/
 *.swp
 *.swo
 
-# Env / secrets
+# Env / secrets（.env.example は追跡する）
 .env
-.env.local
-*.local
+.env.*
+!.env.example
+
+# Next.js（リポジトリルート）
+node_modules/
+.next/
+out/
 
 # Logs
 *.log
