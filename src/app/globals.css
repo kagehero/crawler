@@ -1,0 +1,22 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --paper: #faf8f5;
+  --ink: #1c1917;
+}
+
+body {
+  @apply bg-paper text-ink antialiased;
+}
+
+/* subtle grid paper texture */
+.paper-texture {
+  background-image: radial-gradient(
+    circle at 1px 1px,
+    rgba(28, 25, 23, 0.04) 1px,
+    transparent 0
+  );
+  background-size: 24px 24px;
+}
