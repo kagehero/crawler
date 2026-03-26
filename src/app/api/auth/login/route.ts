@@ -1,5 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 
+/** Secure クッキーは HTTPS のときのみ。http://IP の本番ビルドでは拒否されミドルウェアがループする。 */
+function isHttpsRequest(request: NextRequest): boolean {
+  const forwarded = request.headers.get("x-forwarded-proto");
+  if (forwarded) {
+    return forwarded.split(",")[0]?.trim() === "https";
+  }
+  return request.nextUrl.protocol === "https:";
+}
+
 export async function POST(request: NextRequest) {
   const secret = process.env.ADMIN_SECRET;
   if (!secret) {
@@ -20,7 +29,7 @@ export async function POST(request: NextRequest) {
   const res = NextResponse.json({ ok: true });
   res.cookies.set("crawler_admin", secret, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
+    secure: isHttpsRequest(request),
     sameSite: "lax",
     path: "/",
     maxAge: 60 * 60 * 24 * 7,
