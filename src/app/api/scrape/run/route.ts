@@ -11,8 +11,11 @@ import {
 } from "@/lib/run-scraper";
 
 export const runtime = "nodejs";
-/** 長時間の Playwright 実行用（ホスティングによっては無視されます） */
-export const maxDuration = 3600;
+/**
+ * Vercel Hobby: 最大 300 秒（この値を超えるとデプロイが拒否されます）。
+ * Pro 等でも上限はプラン依存 — 長時間スクレイプは cron + 別ワーカー推奨。
+ */
+export const maxDuration = 300;
 
 /** スクレイパー設定の参照（秘密は含めない） */
 export async function GET(request: NextRequest) {
