@@ -49,7 +49,10 @@ export default function JobsPage() {
   }, [page, prefecture, q]);
 
   useEffect(() => {
-    void load();
+    const id = requestAnimationFrame(() => {
+      void load();
+    });
+    return () => cancelAnimationFrame(id);
   }, [load]);
 
   function applySearch() {
