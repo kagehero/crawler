@@ -16,6 +16,15 @@
 
 ルート直下の **`data/`** は旧出力の残りです。新規は **`crawler/data/`** を使用してください（[data/README.md](data/README.md)）。
 
+## クライアント向け機能（要件対応の目安）
+
+| 要件 | 実装 |
+|------|------|
+| 定期取得（週1・月1 等） | サーバー cron + [`crawler/scripts/cron_scrape_and_import.sh`](crawler/scripts/cron_scrape_and_import.sh)（スケジュールは環境側で設定） |
+| ダウンロード | 管理画面 **求人一覧** の **CSV ダウンロード**（検索条件に一致、最大 5 万件、`GET /api/jobs/export`） |
+| 一覧・検索 | **求人一覧**（都道府県・キーワード、ページ分割） |
+| ログイン | 環境変数 `ADMIN_SECRET` によるパスワード認証（HTTP-only Cookie） |
+
 ## Python スクレイパー（CLI）
 
 ```bash

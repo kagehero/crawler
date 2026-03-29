@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { LoadingSpinner } from "@/components/ui";
 
 type Job = {
@@ -27,6 +27,14 @@ export default function JobsPage() {
   const [prefecture, setPrefecture] = useState("");
   const [q, setQ] = useState("");
   const [loading, setLoading] = useState(true);
+
+  const exportHref = useMemo(() => {
+    const p = new URLSearchParams();
+    if (prefecture.trim()) p.set("prefecture", prefecture.trim());
+    if (q.trim()) p.set("q", q.trim());
+    const qs = p.toString();
+    return `/api/jobs/export${qs ? `?${qs}` : ""}`;
+  }, [prefecture, q]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -102,7 +110,17 @@ export default function JobsPage() {
         >
           検索
         </button>
+        <a
+          href={exportHref}
+          className="inline-flex items-center rounded-lg border border-wash bg-white px-4 py-2 text-sm font-medium text-ink shadow-sm transition hover:bg-stone-50"
+        >
+          CSV ダウンロード
+        </a>
       </div>
+      <p className="text-xs text-sumi/65">
+        ダウンロードは画面上部の検索条件に一致する求人を最大 5
+        万件まで出力します（Excel 向け UTF-8 BOM 付き）。
+      </p>
 
       <div className="overflow-x-auto rounded-2xl border border-wash bg-white shadow-card">
         <table className="min-w-[900px] w-full text-left text-sm">

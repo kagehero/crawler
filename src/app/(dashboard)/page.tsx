@@ -55,6 +55,28 @@ export default function HomePage() {
         </p>
       </header>
 
+      <div className="rounded-2xl border border-amber-100 bg-amber-50/60 p-6 shadow-card">
+        <h3 className="text-sm font-semibold text-ink">定期取得（週1・月1 など）</h3>
+        <p className="mt-2 text-sm leading-relaxed text-sumi/80">
+          求人サイトの自動取得は、お客様のご希望（例:
+          <strong className="font-medium text-ink"> 毎週 / 毎月</strong>
+          ）に合わせてサーバー側のスケジュール（cron）で実行します。Vercel
+          上ではブラウザからの長時間スクレイプは不向きなため、
+          <strong className="font-medium text-ink"> VPS またはお客様環境</strong>
+          で Python スクレイパーを回し、取り込み API で MongoDB
+          に流し込む運用を推奨します。
+        </p>
+        <p className="mt-3 text-xs text-sumi/70">
+          設定例は{" "}
+          <code className="rounded bg-white/80 px-1 py-0.5 text-[11px]">
+            crawler/scripts/cron_scrape_and_import.sh
+          </code>{" "}
+          と README の crontab 記載を参照。cron 例: 毎週月曜 3時{" "}
+          <code className="text-[11px]">0 3 * * 1</code>、毎月1日 3時{" "}
+          <code className="text-[11px]">0 3 1 * *</code>
+        </p>
+      </div>
+
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         <div className="rounded-2xl border border-wash bg-white p-6 shadow-card">
           <p className="text-xs font-medium uppercase tracking-wide text-sumi/60">

@@ -36,8 +36,8 @@ export function LoginForm() {
         </p>
         <h1 className="mt-2 text-2xl font-semibold text-ai">管理コンソール</h1>
         <p className="mt-2 text-sm text-sumi/75">
-          パスワードは環境変数 <code className="text-xs">ADMIN_SECRET</code>{" "}
-          と同じ値です。
+          シンプルなパスワード認証です。パスワードは環境変数{" "}
+          <code className="text-xs">ADMIN_SECRET</code> と同じ値です。
         </p>
       </div>
       <form
