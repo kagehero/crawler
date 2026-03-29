@@ -25,12 +25,12 @@ export default function RunsPage() {
 
   return (
     <div className="space-y-6">
-      <header>
-        <h2 className="text-2xl font-semibold tracking-tight text-ink">
+      <header className="space-y-2">
+        <h1 className="text-2xl font-bold tracking-tight text-ink sm:text-3xl">
           取り込み履歴
-        </h2>
-        <p className="mt-1 text-sm text-sumi/75">
-          CSV 取り込み・定期ジョブの実行ごとの記録です。
+        </h1>
+        <p className="max-w-2xl text-sm leading-relaxed text-sumi/80">
+          CSV をアップロードしたときや、自動ジョブが動いたときの記録です。いつ・何件入ったかの確認に使えます。
         </p>
       </header>
 

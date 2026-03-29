@@ -1,8 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@/lib/mongodb";
 import { verifyBrowserAuth } from "@/lib/auth";
-
-const MAX_ROWS = 50_000;
+import {
+  buildJobsMongoFilter,
+  jobsSortSpec,
+  parseJobsSearchParams,
+} from "@/lib/jobs-query";
 
 const HEADER = [
   "facility_name",
@@ -37,30 +40,16 @@ export async function GET(request: NextRequest) {
   }
 
   const { searchParams } = new URL(request.url);
-  const prefecture = searchParams.get("prefecture")?.trim();
-  const q = searchParams.get("q")?.trim();
-  const requestedLimit = parseInt(searchParams.get("limit") ?? "", 10);
-  const limit = Math.min(
-    MAX_ROWS,
-    Math.max(1, Number.isFinite(requestedLimit) ? requestedLimit : MAX_ROWS)
-  );
-
-  const filter: Record<string, unknown> = {};
-  if (prefecture) filter.prefecture = prefecture;
-  if (q) {
-    filter.$or = [
-      { facility_name: { $regex: q, $options: "i" } },
-      { job_type: { $regex: q, $options: "i" } },
-      { city: { $regex: q, $options: "i" } },
-    ];
-  }
+  const q = parseJobsSearchParams(searchParams, { isExport: true });
+  const filter = buildJobsMongoFilter(q);
+  const sort = jobsSortSpec(q.sort);
 
   const db = await getDb();
   const col = db.collection("jobs");
   const cursor = col
     .find(filter)
-    .sort({ importedAt: -1 })
-    .limit(limit)
+    .sort(sort)
+    .limit(q.limit)
     .project({
       facility_name: 1,
       prefecture: 1,

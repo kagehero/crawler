@@ -38,14 +38,13 @@ export default function ImportPage() {
 
   return (
     <div className="max-w-xl space-y-8">
-      <header>
-        <h2 className="text-2xl font-semibold tracking-tight text-ink">
-          CSV 取り込み
-        </h2>
-        <p className="mt-1 text-sm text-sumi/75">
-          Python スクレイパーが出力した UTF-8（BOM 可）の CSV をアップロードし、MongoDB に反映します。
-          <code className="ml-1 rounded bg-wash px-1.5 py-0.5 text-xs">job_url</code>{" "}
-          をキーに upsert します。
+      <header className="space-y-2">
+        <h1 className="text-2xl font-bold tracking-tight text-ink sm:text-3xl">
+          CSV を取り込む
+        </h1>
+        <p className="max-w-2xl text-sm leading-relaxed text-sumi/80">
+          あらかじめ用意した求人データ（CSV）をアップロードすると、一覧に反映されます。文字コードは
+          UTF-8 で、Excel から保存した場合もそのまま使えることが多いです。
         </p>
       </header>
 

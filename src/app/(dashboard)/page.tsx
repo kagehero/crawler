@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
 import { LoadingSpinner } from "@/components/ui";
 
@@ -12,6 +13,10 @@ type Stats = {
     status?: string;
   } | null;
   topPrefectures: { prefecture: string; count: number }[];
+  periodicSchedule?: {
+    summary: string;
+    savedAt: string | null;
+  };
 };
 
 export default function HomePage() {
@@ -46,35 +51,44 @@ export default function HomePage() {
 
   return (
     <div className="space-y-10">
-      <header>
-        <h2 className="text-2xl font-semibold tracking-tight text-ink">
-          ダッシュボード
-        </h2>
-        <p className="mt-1 text-sm text-sumi/75">
-          求人データの件数と直近の取り込み状況です。
+      <header className="space-y-2">
+        <h1 className="text-2xl font-bold tracking-tight text-ink sm:text-3xl">
+          ホーム
+        </h1>
+        <p className="max-w-2xl text-sm leading-relaxed text-sumi/80">
+          全体の件数と、直近いつデータを取り込んだかを確認できます。求人の検索は左のメニュー「
+          <span className="font-medium text-ink">求人一覧</span>
+          」から行えます。
         </p>
       </header>
 
       <div className="rounded-2xl border border-amber-100 bg-amber-50/60 p-6 shadow-card">
-        <h3 className="text-sm font-semibold text-ink">定期取得（週1・月1 など）</h3>
-        <p className="mt-2 text-sm leading-relaxed text-sumi/80">
-          求人サイトの自動取得は、お客様のご希望（例:
-          <strong className="font-medium text-ink"> 毎週 / 毎月</strong>
-          ）に合わせてサーバー側のスケジュール（cron）で実行します。Vercel
-          上ではブラウザからの長時間スクレイプは不向きなため、
-          <strong className="font-medium text-ink"> VPS またはお客様環境</strong>
-          で Python スクレイパーを回し、取り込み API で MongoDB
-          に流し込む運用を推奨します。
-        </p>
-        <p className="mt-3 text-xs text-sumi/70">
-          設定例は{" "}
-          <code className="rounded bg-white/80 px-1 py-0.5 text-[11px]">
-            crawler/scripts/cron_scrape_and_import.sh
-          </code>{" "}
-          と README の crontab 記載を参照。cron 例: 毎週月曜 3時{" "}
-          <code className="text-[11px]">0 3 * * 1</code>、毎月1日 3時{" "}
-          <code className="text-[11px]">0 3 1 * *</code>
-        </p>
+        <h3 className="text-sm font-semibold text-ink">定期取得（希望スケジュール）</h3>
+        {data.periodicSchedule ? (
+          <div className="mt-3 space-y-3 text-sm leading-relaxed text-sumi/85">
+            <p>
+              <span className="font-medium text-ink">日時の目安：</span>
+              {data.periodicSchedule.summary}
+            </p>
+            <p className="text-xs text-sumi/70">
+              {data.periodicSchedule.savedAt
+                ? `設定を保存した日時: ${new Date(data.periodicSchedule.savedAt).toLocaleString("ja-JP")}`
+                : "まだ「設定」に保存していないため、初期値を表示しています。"}
+            </p>
+            <p>
+              <Link
+                href="/settings"
+                className="font-medium text-ai underline-offset-2 hover:underline"
+              >
+                設定で変更する
+              </Link>
+            </p>
+          </div>
+        ) : (
+          <p className="mt-2 text-sm leading-relaxed text-sumi/80">
+            毎週・毎月など、決まったタイミングで求人データを取り込むには、お使いのサーバー側で実行予定を設定します。
+          </p>
+        )}
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">

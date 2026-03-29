@@ -98,13 +98,14 @@ export default function ScrapePage() {
 
   return (
     <div className="max-w-3xl space-y-8">
-      <header>
-        <h2 className="text-2xl font-semibold tracking-tight text-ink">
-          スクレイピング実行
-        </h2>
-        <p className="mt-1 text-sm text-sumi/75">
-          サーバー上の Python（Playwright）で <code className="rounded bg-wash px-1 text-xs">main.py</code>{" "}
-          を実行します。完了後に MongoDB へ取り込むこともできます。
+      <header className="space-y-2">
+        <h1 className="text-2xl font-bold tracking-tight text-ink sm:text-3xl">
+          スクレイピング
+        </h1>
+        <p className="max-w-2xl text-sm leading-relaxed text-sumi/80">
+          サーバーに Python
+          が用意されている場合、ここから求人サイトの取得を開始できます。クラウド（Vercel
+          など）では制限があることが多いので、通常は専用サーバーでの運用を想定しています。
         </p>
       </header>
 

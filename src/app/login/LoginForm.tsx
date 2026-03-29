@@ -35,9 +35,8 @@ export function LoginForm() {
           Crawler Admin
         </p>
         <h1 className="mt-2 text-2xl font-semibold text-ai">管理コンソール</h1>
-        <p className="mt-2 text-sm text-sumi/75">
-          シンプルなパスワード認証です。パスワードは環境変数{" "}
-          <code className="text-xs">ADMIN_SECRET</code> と同じ値です。
+        <p className="mt-2 text-sm leading-relaxed text-sumi/75">
+          管理者からお渡ししたパスワードを入力してください。
         </p>
       </div>
       <form
