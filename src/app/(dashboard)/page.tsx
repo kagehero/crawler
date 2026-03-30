@@ -127,7 +127,9 @@ export default function HomePage() {
       </div>
 
       <section>
-        <h3 className="mb-4 text-sm font-semibold text-ink">都道府県別（上位）</h3>
+        <h3 className="mb-4 text-sm font-semibold text-ink">
+          都道府県別（対象エリアのみ）
+        </h3>
         <div className="overflow-hidden rounded-2xl border border-wash bg-white shadow-card">
           <table className="w-full text-left text-sm">
             <thead>

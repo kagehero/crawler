@@ -23,6 +23,12 @@ export function escapeRegex(s: string): string {
 
 const MAX_EXPORT_ROWS = 50_000;
 
+/** 求人一覧のデフォルトの 1 ページあたり件数 */
+export const JOBS_PAGE_SIZE = 25;
+
+/** 画面の「1ページの件数」セレクト用（URL の `limit` もこのいずれか） */
+export const JOBS_PAGE_LIMIT_OPTIONS = [25, 50, 100] as const;
+
 export function parseJobsSearchParams(
   sp: URLSearchParams,
   opts?: { isExport?: boolean }
@@ -40,14 +46,10 @@ export function parseJobsSearchParams(
       Math.max(1, Number.isFinite(req) ? req : MAX_EXPORT_ROWS)
     );
   } else {
-    const defaultLimit = 25;
-    limit = Math.min(
-      100,
-      Math.max(
-        1,
-        parseInt(sp.get("limit") ?? String(defaultLimit), 10) || defaultLimit
-      )
-    );
+    const raw = parseInt(sp.get("limit") ?? String(JOBS_PAGE_SIZE), 10);
+    limit = (JOBS_PAGE_LIMIT_OPTIONS as readonly number[]).includes(raw)
+      ? raw
+      : JOBS_PAGE_SIZE;
   }
 
   const q = sp.get("q")?.trim() || undefined;
@@ -162,7 +164,7 @@ export function jobsSortSpec(
   }
 }
 
-/** 一覧用（ページ・件数含む） */
+/** 一覧用（ページ番号・1 ページあたり件数を URL に含む） */
 export function jobsQueryToSearchParams(
   p: ParsedJobsQuery,
   overrides?: Partial<ParsedJobsQuery>

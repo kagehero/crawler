@@ -7,6 +7,7 @@ import {
   describeScheduleJa,
   normalizeSchedule,
 } from "@/lib/schedule-settings";
+import { targetPrefectureLabels } from "@/lib/target-regions";
 
 export async function GET(request: NextRequest) {
   if (!verifyBrowserAuth(request)) {
@@ -20,14 +21,21 @@ export async function GET(request: NextRequest) {
       .collection("scrape_runs")
       .findOne({}, { sort: { finishedAt: -1 } });
 
+    const targetPrefs = targetPrefectureLabels();
     const byPref = await db
       .collection("jobs")
       .aggregate<{ _id: string; n: number }>([
+        { $match: { prefecture: { $in: targetPrefs } } },
         { $group: { _id: "$prefecture", n: { $sum: 1 } } },
-        { $sort: { n: -1 } },
-        { $limit: 12 },
       ])
       .toArray();
+    const countByPref = new Map(
+      byPref.map((x) => [String(x._id ?? ""), x.n] as const)
+    );
+    const topPrefecturesOrdered = targetPrefs.map((prefecture) => ({
+      prefecture,
+      count: countByPref.get(prefecture) ?? 0,
+    }));
 
     type ScheduleRow = {
       _id: string;
@@ -62,10 +70,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
       totalJobs: total,
       lastRun,
-      topPrefectures: byPref.map((x) => ({
-        prefecture: x._id || "（未設定）",
-        count: x.n,
-      })),
+      topPrefectures: topPrefecturesOrdered,
       periodicSchedule,
     });
   } catch (e) {

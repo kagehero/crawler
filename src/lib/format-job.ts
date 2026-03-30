@@ -8,8 +8,14 @@ export function formatSalaryRange(min: number, max: number): string {
 
   const ta = toMan(a);
   const tb = toMan(b);
+  const fmt = (n: number) => n.toLocaleString("ja-JP");
 
-  return `${ta.toLocaleString("ja-JP")}〜${tb.toLocaleString("ja-JP")}万円`;
+  // 片方だけ入っている・0 のときに「40〜0万円」のように見えないようにする
+  if (ta > 0 && tb <= 0) return `${fmt(ta)}万円〜`;
+  if (ta <= 0 && tb > 0) return `〜${fmt(tb)}万円`;
+  if (ta > tb) return `${fmt(tb)}〜${fmt(ta)}万円`;
+
+  return `${fmt(ta)}〜${fmt(tb)}万円`;
 }
 
 export function sourceLabel(source?: string): string {

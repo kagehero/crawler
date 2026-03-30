@@ -10,6 +10,7 @@
 |------|------|
 | `crawler/` | Python（`main.py`、Playwright、`site_url_*`、`input/` の Excel など） |
 | `src/` | Next.js 管理画面（MongoDB・取り込み・Web からスクレイピング） |
+| `src/lib/target-regions.ts` | 取得対象エリア（`crawler/site_url_wellme_raks` と対応）。求人一覧の都道府県候補は **ここを先頭** に並べ、その他は DB のみの県を続ける |
 | `scripts/` | Node 補助（Mongo 接続テストなど） |
 | `docs/` | 構成メモ（[STRUCTURE.md](docs/STRUCTURE.md)） |
 | `package.json` | Node 依存（ルートで `npm install`） |

@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@/lib/mongodb";
 import { verifyBrowserAuth } from "@/lib/auth";
+import {
+  TARGET_REGIONS,
+  targetPrefectureLabels,
+} from "@/lib/target-regions";
 
 function sortJa(arr: string[]): string[] {
   return [...new Set(arr.filter(Boolean))].sort((a, b) =>
@@ -17,15 +21,16 @@ export async function GET(request: NextRequest) {
   const db = await getDb();
   const col = db.collection("jobs");
 
-  const [prefectures, sources, employmentTypes] = await Promise.all([
-    col.distinct("prefecture", { prefecture: { $nin: [null, ""] } }),
+  const [sources, employmentTypes] = await Promise.all([
     col.distinct("source"),
     col.distinct("employment_type", { employment_type: { $nin: [null, ""] } }),
   ]);
 
   return NextResponse.json({
-    prefectures: sortJa(prefectures.map(String)),
+    prefectures: targetPrefectureLabels(),
     sources: sortJa(sources.map(String)),
     employmentTypes: sortJa(employmentTypes.map(String)).slice(0, 80),
+    /** 取得対象エリア（ウェルミー入力と対応） */
+    targetRegions: TARGET_REGIONS,
   });
 }

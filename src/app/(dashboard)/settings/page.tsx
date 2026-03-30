@@ -113,8 +113,7 @@ export default function SettingsPage() {
           設定
         </h1>
         <p className="text-sm leading-relaxed text-sumi/80">
-          定期で求人データを取り込む「希望のタイミング」を登録します。実際の自動実行は、お使いのサーバーで
-          cron などを設定する必要があります（ここで保存した内容はサーバー側の作業のメモとして使えます）。
+          定期で求人データを取り込む「希望のタイミング」を登録します。
         </p>
       </header>
 
@@ -188,20 +187,11 @@ export default function SettingsPage() {
             onChange={(e) => setTimeStr(e.target.value)}
             className="w-full max-w-[12rem] rounded-xl border border-wash bg-white px-3 py-2.5 text-sm text-ink shadow-sm outline-none ring-ai/15 focus:ring-2"
           />
-          <span className="block text-xs text-sumi/65">
-            サーバー（または cron の実行環境）のタイムゾーンに合わせて解釈してください。
-          </span>
         </label>
 
         <div className="rounded-xl border border-wash bg-paper/60 px-4 py-3 text-sm text-sumi/90">
           <p className="font-medium text-ink">プレビュー</p>
           <p className="mt-1">{describeScheduleJa(preview)}</p>
-          <p className="mt-3 text-xs text-sumi/75">
-            crontab の参考（分 時 …）:
-            <code className="ml-1 rounded bg-white px-1.5 py-0.5 font-mono text-[11px] text-ink">
-              {scheduleToCronLine(preview)}
-            </code>
-          </p>
         </div>
 
         {err && (
