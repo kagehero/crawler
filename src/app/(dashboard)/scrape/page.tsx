@@ -98,17 +98,13 @@ export default function ScrapePage() {
 
   return (
     <div className="max-w-3xl space-y-8">
-      <header>
-        <h2 className="text-2xl font-semibold tracking-tight text-ink">
-          スクレイピング実行
-        </h2>
-        <p className="mt-1 text-sm text-sumi/75">
-          サーバー上の Python（Playwright）で <code className="rounded bg-wash px-1 text-xs">main.py</code>{" "}
-          を実行します。完了後に MongoDB へ取り込むこともできます。
-        </p>
+      <header className="space-y-2">
+        <h1 className="text-2xl font-bold tracking-tight text-ink sm:text-3xl">
+          スクレイピング
+        </h1>
       </header>
 
-      {!cfg.configured ? (
+      {/* {!cfg.configured ? (
         <div className="rounded-2xl border border-amber-200 bg-amber-50/90 px-5 py-4 text-sm text-amber-950">
           <p className="font-medium">スクレイパー同梱フォルダが見つかりません</p>
           <p className="mt-2 text-amber-900/90">
@@ -147,7 +143,7 @@ export default function ScrapePage() {
             </div>
           </dl>
         </div>
-      )}
+      )} */}
 
       <form
         className="rounded-2xl border border-wash bg-white p-8 shadow-card"
@@ -178,7 +174,7 @@ export default function ScrapePage() {
               onChange={(e) => setImportAfter(e.target.checked)}
               disabled={!cfg.configured || running}
             />
-            成功後に出力 CSV を MongoDB に取り込む
+            成功後に出力 CSV をデータベースに取り込む
           </label>
         </div>
         <button

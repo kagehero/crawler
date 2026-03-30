@@ -20,3 +20,12 @@ body {
   );
   background-size: 24px 24px;
 }
+
+@layer base {
+  :focus-visible {
+    @apply outline-2 outline-offset-2 outline-ai/50;
+  }
+  ::selection {
+    @apply bg-ai/15 text-ink;
+  }
+}

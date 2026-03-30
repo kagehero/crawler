@@ -10,11 +10,21 @@
 |------|------|
 | `crawler/` | Python（`main.py`、Playwright、`site_url_*`、`input/` の Excel など） |
 | `src/` | Next.js 管理画面（MongoDB・取り込み・Web からスクレイピング） |
+| `src/lib/target-regions.ts` | 取得対象エリア（`crawler/site_url_wellme_raks` と対応）。求人一覧の都道府県候補は **ここを先頭** に並べ、その他は DB のみの県を続ける |
 | `scripts/` | Node 補助（Mongo 接続テストなど） |
 | `docs/` | 構成メモ（[STRUCTURE.md](docs/STRUCTURE.md)） |
 | `package.json` | Node 依存（ルートで `npm install`） |
 
 ルート直下の **`data/`** は旧出力の残りです。新規は **`crawler/data/`** を使用してください（[data/README.md](data/README.md)）。
+
+## クライアント向け機能（要件対応の目安）
+
+| 要件 | 実装 |
+|------|------|
+| 定期取得（週1・月1 等） | サーバー cron + [`crawler/scripts/cron_scrape_and_import.sh`](crawler/scripts/cron_scrape_and_import.sh)（スケジュールは環境側で設定） |
+| ダウンロード | **求人一覧** の **CSV をダウンロード**（現在の絞り込みと同じ条件、最大 5 万件） |
+| 一覧・検索 | **求人一覧**（キーワード、都道府県・市区町村、出所、雇用形態、職種、年収レンジ、並び替え、ページ分割） |
+| ログイン | 環境変数 `ADMIN_SECRET` によるパスワード認証（HTTP-only Cookie） |
 
 ## Python スクレイパー（CLI）
 
