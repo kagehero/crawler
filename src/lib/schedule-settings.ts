@@ -1,6 +1,6 @@
 /** 定期取得の希望スケジュール（MongoDB に保存。実際の cron はサーバー側で設定） */
 
-export type ScheduleMode = "weekly" | "monthly";
+export type ScheduleMode = "weekly" | "biweekly" | "monthly";
 
 export type ScheduleSettings = {
   mode: ScheduleMode;
@@ -40,7 +40,11 @@ function finiteInt(n: unknown, fallback: number): number {
 
 export function normalizeSchedule(input: Partial<ScheduleSettings>): ScheduleSettings {
   const mode =
-    input.mode === "monthly" || input.mode === "weekly" ? input.mode : "weekly";
+    input.mode === "monthly" ||
+    input.mode === "weekly" ||
+    input.mode === "biweekly"
+      ? input.mode
+      : "weekly";
   const wd = finiteInt(input.weekday, DEFAULT_SCHEDULE.weekday);
   const weekday = wd >= 0 && wd <= 6 ? wd : DEFAULT_SCHEDULE.weekday;
   const dm = finiteInt(input.dayOfMonth, DEFAULT_SCHEDULE.dayOfMonth);
@@ -56,7 +60,8 @@ export function normalizeSchedule(input: Partial<ScheduleSettings>): ScheduleSet
 /** Linux crontab 形式の参考（分 時 …）。サーバーのタイムゾーンに依存 */
 export function scheduleToCronLine(s: ScheduleSettings): string {
   const { minute, hour, weekday, dayOfMonth, mode } = s;
-  if (mode === "weekly") {
+  if (mode === "weekly" || mode === "biweekly") {
+    /** 隔週は標準 cron では表現できないため、週次と同じ行を返す（実運用はスクリプトで隔週判定が必要な場合あり） */
     return `${minute} ${hour} * * ${weekday}`;
   }
   return `${minute} ${hour} ${dayOfMonth} * *`;
@@ -67,6 +72,10 @@ export function describeScheduleJa(s: ScheduleSettings): string {
   if (s.mode === "weekly") {
     const w = WEEKDAY_LABELS.find((x) => x.value === s.weekday)?.label ?? "指定曜日";
     return `毎週${w}の ${hm}`;
+  }
+  if (s.mode === "biweekly") {
+    const w = WEEKDAY_LABELS.find((x) => x.value === s.weekday)?.label ?? "指定曜日";
+    return `隔週${w}の ${hm}`;
   }
   return `毎月${s.dayOfMonth}日の ${hm}`;
 }
