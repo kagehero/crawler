@@ -15,12 +15,17 @@ import {
   JOBS_PAGE_SIZE,
   jobsQueryToSearchParams,
   parseJobsSearchParams,
+  PAYMENT_TYPE_OPTIONS,
   type ParsedJobsQuery,
+  type PaymentTypeOption,
 } from "@/lib/jobs-query";
-import { formatSalaryRange, sourceLabel } from "@/lib/format-job";
+import {
+  formatPaymentMethodForList,
+  formatSalaryRangeForList,
+  sourceLabel,
+} from "@/lib/format-job";
 import {
   TARGET_REGIONS,
-  allTargetCities,
   citiesForTargetPrefecture,
   targetPrefectureLabels,
 } from "@/lib/target-regions";
@@ -35,15 +40,36 @@ type Job = {
   employment_type?: string;
   salary_min?: number;
   salary_max?: number;
+  payment_method?: string;
+  service_type?: string;
   job_url?: string;
   source?: string;
 };
+
+type SourceKey = "job_medley" | "wellme" | "unknown";
 
 type FilterOptions = {
   prefectures: string[];
   sources: string[];
   employmentTypes: string[];
+  jobCategoriesBySource: Record<SourceKey, string[]>;
+  serviceTypesBySource: Record<SourceKey, string[]>;
 };
+
+function mergeBySourceLists(
+  bySource: Record<SourceKey, string[]> | undefined,
+  selectedSource: string | undefined
+): string[] {
+  if (!bySource) return [];
+  if (selectedSource && (selectedSource === "job_medley" || selectedSource === "wellme" || selectedSource === "unknown")) {
+    return bySource[selectedSource] ?? [];
+  }
+  const set = new Set<string>();
+  for (const k of ["job_medley", "wellme", "unknown"] as const) {
+    (bySource[k] ?? []).forEach((x) => set.add(x));
+  }
+  return [...set].sort((a, b) => a.localeCompare(b, "ja"));
+}
 
 function parsedFromUrl(sp: URLSearchParams): ParsedJobsQuery {
   return parseJobsSearchParams(sp);
@@ -115,14 +141,31 @@ export function JobsExplorer() {
     [parsed.page, pages]
   );
 
-  /** 市区町村: target-regions 優先（都道府県に応じた候補） */
-  const citySuggestions = useMemo(() => {
-    if (parsed.prefecture) {
-      const sub = citiesForTargetPrefecture(parsed.prefecture);
-      if (sub.length > 0) return sub;
-    }
-    return allTargetCities();
+  /** 市区町村: target-regions のプルダウン（都道府県未選択時は空） */
+  const cityOptions = useMemo(() => {
+    if (!parsed.prefecture) return [];
+    return citiesForTargetPrefecture(parsed.prefecture);
   }, [parsed.prefecture]);
+
+  const jobCategoryOptions = useMemo(
+    () => mergeBySourceLists(options?.jobCategoriesBySource, parsed.source),
+    [options?.jobCategoriesBySource, parsed.source]
+  );
+
+  const serviceTypeOptions = useMemo(
+    () => mergeBySourceLists(options?.serviceTypesBySource, parsed.source),
+    [options?.serviceTypesBySource, parsed.source]
+  );
+
+  /** DB の distinct に無い値（旧 URL 等）も選択肢に含める */
+  const employmentOptions = useMemo(() => {
+    const base = options?.employmentTypes ?? [];
+    if (!parsed.employment) return base;
+    if (base.includes(parsed.employment)) return base;
+    return [...base, parsed.employment].sort((a, b) =>
+      a.localeCompare(b, "ja")
+    );
+  }, [options?.employmentTypes, parsed.employment]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -183,6 +226,13 @@ export function JobsExplorer() {
           ? src
           : undefined;
 
+      const paymentRaw = get("paymentType");
+      const paymentType = (PAYMENT_TYPE_OPTIONS as readonly string[]).includes(
+        paymentRaw
+      )
+        ? (paymentRaw as PaymentTypeOption)
+        : undefined;
+
       let salaryGte: number | undefined;
       let salaryLte: number | undefined;
       const sg = get("salaryGte");
@@ -199,6 +249,7 @@ export function JobsExplorer() {
       const p = parsedRef.current;
       const newPrefecture = get("prefecture") || undefined;
       const prefectureChanged = newPrefecture !== p.prefecture;
+      const sourceChanged = source !== p.source;
       const merged: ParsedJobsQuery = {
         page: 1,
         limit: p.limit,
@@ -207,7 +258,9 @@ export function JobsExplorer() {
         city: prefectureChanged ? undefined : get("city") || undefined,
         source,
         employment: get("employment") || undefined,
-        jobCategory: get("jobCategory") || undefined,
+        jobCategory: sourceChanged ? undefined : get("jobCategory") || undefined,
+        serviceType: sourceChanged ? undefined : get("serviceType") || undefined,
+        paymentType,
         salaryGte,
         salaryLte,
         sort,
@@ -398,18 +451,21 @@ export function JobsExplorer() {
                     <span className="text-[10px] font-medium text-sumi/90">
                       市区町村
                     </span>
-                    <input
+                    <select
                       name="city"
-                      list="city-target-suggestions"
                       defaultValue={parsed.city ?? ""}
-                      placeholder="例：川越市"
-                      className="w-full min-w-0 rounded-lg border border-wash bg-white px-2 py-1.5 text-xs text-ink shadow-sm outline-none ring-ai/15 focus:ring-2"
-                    />
-                    <datalist id="city-target-suggestions">
-                      {citySuggestions.map((c) => (
-                        <option key={c} value={c} />
+                      disabled={!parsed.prefecture}
+                      className="w-full min-w-0 rounded-lg border border-wash bg-white px-2 py-1.5 text-xs text-ink shadow-sm outline-none ring-ai/15 focus:ring-2 disabled:cursor-not-allowed disabled:bg-wash/60"
+                    >
+                      <option value="">
+                        {parsed.prefecture ? "すべて" : "先に都道府県を選択"}
+                      </option>
+                      {cityOptions.map((c) => (
+                        <option key={c} value={c}>
+                          {c}
+                        </option>
                       ))}
-                    </datalist>
+                    </select>
                   </label>
                 </div>
                 <details className="mt-2 rounded-md border border-wash/90 bg-paper/50">
@@ -437,7 +493,7 @@ export function JobsExplorer() {
                 <div className={`mt-0.5 ${FILTER_FIELD_GRID}`}>
                   <label className="flex min-w-0 flex-col gap-0.5">
                     <span className="text-[10px] font-medium text-sumi/90">
-                      出所
+                      媒体名
                     </span>
                     <select
                       name="source"
@@ -456,41 +512,85 @@ export function JobsExplorer() {
                     <span className="text-[10px] font-medium text-sumi/90">
                       雇用形態
                     </span>
-                    <input
+                    <select
                       name="employment"
-                      list="employment-suggestions"
                       defaultValue={parsed.employment ?? ""}
-                      placeholder="例：正社員"
                       className="w-full min-w-0 rounded-lg border border-wash bg-white px-2 py-1.5 text-xs text-ink shadow-sm outline-none ring-ai/15 focus:ring-2"
-                    />
-                    <datalist id="employment-suggestions">
-                      {(options?.employmentTypes ?? []).map((e) => (
-                        <option key={e} value={e} />
+                    >
+                      <option value="">すべて</option>
+                      {employmentOptions.map((e) => (
+                        <option key={e} value={e}>
+                          {e}
+                        </option>
                       ))}
-                    </datalist>
+                    </select>
                   </label>
                   <label className="flex min-w-0 flex-col gap-0.5">
                     <span className="text-[10px] font-medium text-sumi/90">
-                      職種
+                      職種（job_category）
                     </span>
-                    <input
+                    <select
                       name="jobCategory"
                       defaultValue={parsed.jobCategory ?? ""}
-                      placeholder="例：介護職"
                       className="w-full min-w-0 rounded-lg border border-wash bg-white px-2 py-1.5 text-xs text-ink shadow-sm outline-none ring-ai/15 focus:ring-2"
-                    />
+                    >
+                      <option value="">すべて</option>
+                      {jobCategoryOptions.map((c) => (
+                        <option key={c} value={c}>
+                          {c}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="flex min-w-0 flex-col gap-0.5">
+                    <span className="text-[10px] font-medium text-sumi/90">
+                      サービス種別
+                    </span>
+                    <select
+                      name="serviceType"
+                      defaultValue={parsed.serviceType ?? ""}
+                      className="w-full min-w-0 rounded-lg border border-wash bg-white px-2 py-1.5 text-xs text-ink shadow-sm outline-none ring-ai/15 focus:ring-2"
+                    >
+                      <option value="">すべて</option>
+                      {serviceTypeOptions.map((c) => (
+                        <option key={c} value={c}>
+                          {c}
+                        </option>
+                      ))}
+                    </select>
                   </label>
                 </div>
               </fieldset>
 
               <fieldset className="min-h-0 rounded-lg border border-wash bg-white/95 px-2.5 py-2 shadow-sm sm:px-3">
                 <legend className="text-[11px] font-semibold text-ink">
-                  年収（万円・目安）
+                  給与（CSV の支給区分・金額）
                 </legend>
+                <p className="mb-1.5 text-[10px] leading-snug text-sumi/70">
+                  月給・時給・日給で絞り込みます。金額は DB
+                  の数値に合わせた目安です。
+                </p>
                 <div className={`mt-0.5 ${FILTER_FIELD_GRID}`}>
                   <label className="flex min-w-0 flex-col gap-0.5">
                     <span className="text-[10px] font-medium text-sumi/90">
-                      下限
+                      支給区分
+                    </span>
+                    <select
+                      name="paymentType"
+                      defaultValue={parsed.paymentType ?? ""}
+                      className="w-full min-w-0 rounded-lg border border-wash bg-white px-2 py-1.5 text-xs text-ink shadow-sm outline-none ring-ai/15 focus:ring-2"
+                    >
+                      <option value="">すべて</option>
+                      {PAYMENT_TYPE_OPTIONS.map((pm) => (
+                        <option key={pm} value={pm}>
+                          {pm}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="flex min-w-0 flex-col gap-0.5">
+                    <span className="text-[10px] font-medium text-sumi/90">
+                      下限（万円目安）
                     </span>
                     <input
                       name="salaryGte"
@@ -502,14 +602,14 @@ export function JobsExplorer() {
                           ? String(parsed.salaryGte)
                           : ""
                       }
-                      placeholder="300"
-                      title="求人の上限年収がこの値以上"
+                      placeholder="例：300"
+                      title="salary_max がこの値以上の求人"
                       className="w-full min-w-0 rounded-lg border border-wash bg-white px-2 py-1.5 text-xs text-ink shadow-sm outline-none ring-ai/15 focus:ring-2"
                     />
                   </label>
                   <label className="flex min-w-0 flex-col gap-0.5">
                     <span className="text-[10px] font-medium text-sumi/90">
-                      上限
+                      上限（万円目安）
                     </span>
                     <input
                       name="salaryLte"
@@ -521,8 +621,8 @@ export function JobsExplorer() {
                           ? String(parsed.salaryLte)
                           : ""
                       }
-                      placeholder="500"
-                      title="求人の上限年収がこの値以下"
+                      placeholder="例：500"
+                      title="salary_min がこの値以下の求人"
                       className="w-full min-w-0 rounded-lg border border-wash bg-white px-2 py-1.5 text-xs text-ink shadow-sm outline-none ring-ai/15 focus:ring-2"
                     />
                   </label>
@@ -544,8 +644,8 @@ export function JobsExplorer() {
                       className="w-full min-w-0 rounded-lg border border-wash bg-white px-2 py-1.5 text-xs text-ink shadow-sm outline-none ring-ai/15 focus:ring-2"
                     >
                       <option value="imported_desc">取り込みが新しい順</option>
-                      <option value="salary_high">年収の高い順</option>
-                      <option value="salary_low">年収の低い順</option>
+                      <option value="salary_high">給与の高い順</option>
+                      <option value="salary_low">給与の低い順</option>
                       <option value="name_asc">施設名（あいうえお順）</option>
                     </select>
                   </label>
@@ -575,21 +675,23 @@ export function JobsExplorer() {
 
       <div className="overflow-hidden rounded-2xl border border-wash bg-white shadow-card">
         <div className="overflow-x-auto">
-          <table className="min-w-[960px] w-full text-left text-sm">
+          <table className="min-w-[1100px] w-full text-left text-sm">
             <thead className="sticky top-0 z-10 bg-stone-100/95 text-xs font-semibold uppercase tracking-wide text-sumi/75 backdrop-blur-sm">
               <tr className="border-b border-wash">
                 <th className="whitespace-nowrap px-3 py-3">施設・求人</th>
                 <th className="whitespace-nowrap px-3 py-3">勤務地</th>
                 <th className="whitespace-nowrap px-3 py-3">職種</th>
                 <th className="whitespace-nowrap px-3 py-3">雇用</th>
-                <th className="whitespace-nowrap px-3 py-3">年収（目安）</th>
-                <th className="whitespace-nowrap px-3 py-3">出所</th>
+                <th className="whitespace-nowrap px-3 py-3">給与</th>
+                <th className="whitespace-nowrap px-3 py-3">支給</th>
+                <th className="whitespace-nowrap px-3 py-3">サービス</th>
+                <th className="whitespace-nowrap px-3 py-3">媒体</th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={6} className="px-4 py-14">
+                  <td colSpan={8} className="px-4 py-14">
                     <div className="flex justify-center">
                       <LoadingSpinner size="md" label="読み込み中…" />
                     </div>
@@ -597,7 +699,7 @@ export function JobsExplorer() {
                 </tr>
               ) : items.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="px-4 py-12 text-center text-sumi/65">
+                  <td colSpan={8} className="px-4 py-12 text-center text-sumi/65">
                     条件に合う求人がありません。キーワードや絞り込みを変えてみてください。
                   </td>
                 </tr>
@@ -638,10 +740,17 @@ export function JobsExplorer() {
                       {j.employment_type || "—"}
                     </td>
                     <td className="whitespace-nowrap px-3 py-3 tabular-nums text-sumi">
-                      {formatSalaryRange(
+                      {formatSalaryRangeForList(
+                        j.payment_method,
                         j.salary_min ?? 0,
                         j.salary_max ?? 0
                       )}
+                    </td>
+                    <td className="whitespace-nowrap px-3 py-3 text-xs text-sumi">
+                      {formatPaymentMethodForList(j.payment_method)}
+                    </td>
+                    <td className="max-w-[160px] px-3 py-3 text-xs text-sumi">
+                      <span className="line-clamp-2">{j.service_type || "—"}</span>
                     </td>
                     <td className="px-3 py-3 text-xs text-sumi/80">
                       {sourceLabel(j.source)}

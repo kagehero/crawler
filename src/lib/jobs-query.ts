@@ -3,6 +3,10 @@
 const SOURCES = ["job_medley", "wellme", "unknown"] as const;
 export type JobSource = (typeof SOURCES)[number];
 
+/** CSV の支給区分（検索は月給・時給・日給のみ） */
+export const PAYMENT_TYPE_OPTIONS = ["月給", "時給", "日給"] as const;
+export type PaymentTypeOption = (typeof PAYMENT_TYPE_OPTIONS)[number];
+
 export type ParsedJobsQuery = {
   page: number;
   limit: number;
@@ -12,6 +16,9 @@ export type ParsedJobsQuery = {
   source?: JobSource;
   employment?: string;
   jobCategory?: string;
+  serviceType?: string;
+  /** 支給区分（payment_method と一致） */
+  paymentType?: PaymentTypeOption;
   salaryGte?: number;
   salaryLte?: number;
   sort: "imported_desc" | "salary_high" | "salary_low" | "name_asc";
@@ -28,6 +35,16 @@ export const JOBS_PAGE_SIZE = 25;
 
 /** 画面の「1ページの件数」セレクト用（URL の `limit` もこのいずれか） */
 export const JOBS_PAGE_LIMIT_OPTIONS = [25, 50, 100] as const;
+
+function parsePaymentType(
+  raw: string | null | undefined
+): PaymentTypeOption | undefined {
+  const t = raw?.trim();
+  if (!t) return undefined;
+  return (PAYMENT_TYPE_OPTIONS as readonly string[]).includes(t)
+    ? (t as PaymentTypeOption)
+    : undefined;
+}
 
 export function parseJobsSearchParams(
   sp: URLSearchParams,
@@ -57,6 +74,8 @@ export function parseJobsSearchParams(
   const city = sp.get("city")?.trim() || undefined;
   const employment = sp.get("employment")?.trim() || undefined;
   const jobCategory = sp.get("jobCategory")?.trim() || undefined;
+  const serviceType = sp.get("serviceType")?.trim() || undefined;
+  const paymentType = parsePaymentType(sp.get("paymentType"));
 
   const srcRaw = sp.get("source")?.trim();
   const source =
@@ -94,6 +113,8 @@ export function parseJobsSearchParams(
     source,
     employment,
     jobCategory,
+    serviceType,
+    paymentType,
     salaryGte,
     salaryLte,
     sort,
@@ -108,7 +129,7 @@ export function buildJobsMongoFilter(p: ParsedJobsQuery): Record<string, unknown
     parts.push({ prefecture: p.prefecture });
   }
   if (p.city) {
-    parts.push({ city: { $regex: escapeRegex(p.city), $options: "i" } });
+    parts.push({ city: p.city });
   }
   if (p.source) {
     parts.push({ source: p.source });
@@ -119,16 +140,20 @@ export function buildJobsMongoFilter(p: ParsedJobsQuery): Record<string, unknown
     });
   }
   if (p.jobCategory) {
-    parts.push({
-      job_category: { $regex: escapeRegex(p.jobCategory), $options: "i" },
-    });
+    parts.push({ job_category: p.jobCategory });
+  }
+  if (p.serviceType) {
+    parts.push({ service_type: p.serviceType });
+  }
+  if (p.paymentType) {
+    parts.push({ payment_method: p.paymentType });
   }
 
   if (p.salaryGte !== undefined) {
     parts.push({ salary_max: { $gte: p.salaryGte } });
   }
   if (p.salaryLte !== undefined) {
-    parts.push({ salary_max: { $lte: p.salaryLte } });
+    parts.push({ salary_min: { $lte: p.salaryLte } });
   }
 
   if (p.q) {
@@ -187,6 +212,8 @@ export function filterParamsToSearchParams(
   if (p.source) sp.set("source", p.source);
   if (p.employment) sp.set("employment", p.employment);
   if (p.jobCategory) sp.set("jobCategory", p.jobCategory);
+  if (p.serviceType) sp.set("serviceType", p.serviceType);
+  if (p.paymentType) sp.set("paymentType", p.paymentType);
   if (p.salaryGte !== undefined) sp.set("salaryGte", String(p.salaryGte));
   if (p.salaryLte !== undefined) sp.set("salaryLte", String(p.salaryLte));
   if (p.sort && p.sort !== "imported_desc") sp.set("sort", p.sort);

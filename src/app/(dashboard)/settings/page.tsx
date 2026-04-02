@@ -7,7 +7,6 @@ import {
   WEEKDAY_LABELS,
   describeScheduleJa,
   normalizeSchedule,
-  scheduleToCronLine,
   type ScheduleSettings,
 } from "@/lib/schedule-settings";
 
@@ -138,6 +137,16 @@ export default function SettingsPage() {
               <input
                 type="radio"
                 name="mode"
+                checked={mode === "biweekly"}
+                onChange={() => setMode("biweekly")}
+                className="text-ai focus:ring-ai"
+              />
+              <span className="text-sm font-medium text-ink">隔週</span>
+            </label>
+            <label className="flex cursor-pointer items-center gap-2 rounded-xl border border-wash bg-paper/50 px-4 py-3 has-[:checked]:border-ai/40 has-[:checked]:bg-ai/5">
+              <input
+                type="radio"
+                name="mode"
                 checked={mode === "monthly"}
                 onChange={() => setMode("monthly")}
                 className="text-ai focus:ring-ai"
@@ -147,7 +156,7 @@ export default function SettingsPage() {
           </div>
         </fieldset>
 
-        {mode === "weekly" ? (
+        {mode === "weekly" || mode === "biweekly" ? (
           <label className="block space-y-2">
             <span className="text-sm font-semibold text-ink">曜日</span>
             <select
