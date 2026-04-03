@@ -11,14 +11,20 @@ export type ParsedJobsQuery = {
   page: number;
   limit: number;
   q?: string;
-  prefecture?: string;
-  city?: string;
-  source?: JobSource;
-  employment?: string;
-  jobCategory?: string;
-  serviceType?: string;
-  /** 支給区分（payment_method と一致） */
-  paymentType?: PaymentTypeOption;
+  /** 都道府県（複数指定時はいずれかに一致） */
+  prefectures?: string[];
+  /** 市区町村（複数指定時はいずれかに一致） */
+  cities?: string[];
+  /** 媒体（複数指定時はいずれかに一致） */
+  sources?: JobSource[];
+  /** 雇用形態（複数指定時はいずれかに一致） */
+  employments?: string[];
+  /** 職種（複数指定時はいずれかに一致） */
+  jobCategories?: string[];
+  /** サービス種別（複数指定時はいずれかに一致） */
+  serviceTypes?: string[];
+  /** 支給区分（payment_method と一致・複数はいずれか） */
+  paymentTypes?: PaymentTypeOption[];
   salaryGte?: number;
   salaryLte?: number;
   sort: "imported_desc" | "salary_high" | "salary_low" | "name_asc";
@@ -36,14 +42,16 @@ export const JOBS_PAGE_SIZE = 25;
 /** 画面の「1ページの件数」セレクト用（URL の `limit` もこのいずれか） */
 export const JOBS_PAGE_LIMIT_OPTIONS = [25, 50, 100] as const;
 
-function parsePaymentType(
-  raw: string | null | undefined
-): PaymentTypeOption | undefined {
-  const t = raw?.trim();
-  if (!t) return undefined;
-  return (PAYMENT_TYPE_OPTIONS as readonly string[]).includes(t)
-    ? (t as PaymentTypeOption)
-    : undefined;
+function uniqueStrings(arr: string[]): string[] {
+  return [...new Set(arr.map((s) => s.trim()).filter(Boolean))];
+}
+
+function parsePaymentTypes(sp: URLSearchParams): PaymentTypeOption[] | undefined {
+  const list = uniqueStrings(sp.getAll("paymentType"));
+  const ok = list.filter((t) =>
+    (PAYMENT_TYPE_OPTIONS as readonly string[]).includes(t)
+  ) as PaymentTypeOption[];
+  return ok.length ? ok : undefined;
 }
 
 export function parseJobsSearchParams(
@@ -70,17 +78,25 @@ export function parseJobsSearchParams(
   }
 
   const q = sp.get("q")?.trim() || undefined;
-  const prefecture = sp.get("prefecture")?.trim() || undefined;
-  const city = sp.get("city")?.trim() || undefined;
-  const employment = sp.get("employment")?.trim() || undefined;
-  const jobCategory = sp.get("jobCategory")?.trim() || undefined;
-  const serviceType = sp.get("serviceType")?.trim() || undefined;
-  const paymentType = parsePaymentType(sp.get("paymentType"));
+  const prefecturesRaw = uniqueStrings(sp.getAll("prefecture"));
+  const prefectures = prefecturesRaw.length ? prefecturesRaw : undefined;
+  const citiesRaw = uniqueStrings(sp.getAll("city"));
+  const cities = citiesRaw.length ? citiesRaw : undefined;
+  const employmentsRaw = uniqueStrings(sp.getAll("employment"));
+  const employments = employmentsRaw.length ? employmentsRaw : undefined;
+  const jobCategoriesRaw = uniqueStrings(sp.getAll("jobCategory"));
+  const jobCategories = jobCategoriesRaw.length ? jobCategoriesRaw : undefined;
+  const serviceTypesRaw = uniqueStrings(sp.getAll("serviceType"));
+  const serviceTypes = serviceTypesRaw.length ? serviceTypesRaw : undefined;
+  const paymentTypes = parsePaymentTypes(sp);
 
-  const srcRaw = sp.get("source")?.trim();
-  const source =
-    srcRaw && (SOURCES as readonly string[]).includes(srcRaw)
-      ? (srcRaw as JobSource)
+  const sourcesRaw = uniqueStrings(sp.getAll("source"));
+  const sourcesFiltered = sourcesRaw.filter((s) =>
+    (SOURCES as readonly string[]).includes(s)
+  ) as JobSource[];
+  const sources =
+    sourcesFiltered.length > 0
+      ? ([...new Set(sourcesFiltered)] as JobSource[])
       : undefined;
 
   const salaryGteRaw = sp.get("salaryGte")?.trim();
@@ -108,13 +124,13 @@ export function parseJobsSearchParams(
     page,
     limit,
     q,
-    prefecture,
-    city,
-    source,
-    employment,
-    jobCategory,
-    serviceType,
-    paymentType,
+    prefectures,
+    cities,
+    sources,
+    employments,
+    jobCategories,
+    serviceTypes,
+    paymentTypes,
     salaryGte,
     salaryLte,
     sort,
@@ -125,28 +141,73 @@ export function parseJobsSearchParams(
 export function buildJobsMongoFilter(p: ParsedJobsQuery): Record<string, unknown> {
   const parts: Record<string, unknown>[] = [];
 
-  if (p.prefecture) {
-    parts.push({ prefecture: p.prefecture });
+  if (p.prefectures && p.prefectures.length > 0) {
+    if (p.prefectures.length === 1) {
+      parts.push({ prefecture: p.prefectures[0] });
+    } else {
+      parts.push({ prefecture: { $in: p.prefectures } });
+    }
   }
-  if (p.city) {
-    parts.push({ city: p.city });
+  if (p.cities && p.cities.length > 0) {
+    if (p.cities.length === 1) {
+      parts.push({ city: p.cities[0] });
+    } else {
+      parts.push({ city: { $in: p.cities } });
+    }
   }
-  if (p.source) {
-    parts.push({ source: p.source });
+  if (p.sources && p.sources.length > 0) {
+    if (p.sources.length === 1) {
+      parts.push({ source: p.sources[0] });
+    } else {
+      parts.push({ source: { $in: p.sources } });
+    }
   }
-  if (p.employment) {
-    parts.push({
-      employment_type: { $regex: escapeRegex(p.employment), $options: "i" },
-    });
+  if (p.employments && p.employments.length > 0) {
+    if (p.employments.length === 1) {
+      parts.push({
+        employment_type: {
+          $regex: escapeRegex(p.employments[0]!),
+          $options: "i",
+        },
+      });
+    } else {
+      parts.push({
+        $or: p.employments.map((e) => ({
+          employment_type: { $regex: escapeRegex(e), $options: "i" },
+        })),
+      });
+    }
   }
-  if (p.jobCategory) {
-    parts.push({ job_category: p.jobCategory });
+  if (p.jobCategories && p.jobCategories.length > 0) {
+    if (p.jobCategories.length === 1) {
+      parts.push({ job_category: p.jobCategories[0] });
+    } else {
+      parts.push({ job_category: { $in: p.jobCategories } });
+    }
   }
-  if (p.serviceType) {
-    parts.push({ service_type: p.serviceType });
+  /** サービス種別: 求人の service_type 文字列に「選択語が含まれる」ものを OR でマッチ */
+  if (p.serviceTypes && p.serviceTypes.length > 0) {
+    if (p.serviceTypes.length === 1) {
+      parts.push({
+        service_type: {
+          $regex: escapeRegex(p.serviceTypes[0]!),
+          $options: "i",
+        },
+      });
+    } else {
+      parts.push({
+        $or: p.serviceTypes.map((s) => ({
+          service_type: { $regex: escapeRegex(s), $options: "i" },
+        })),
+      });
+    }
   }
-  if (p.paymentType) {
-    parts.push({ payment_method: p.paymentType });
+  if (p.paymentTypes && p.paymentTypes.length > 0) {
+    if (p.paymentTypes.length === 1) {
+      parts.push({ payment_method: p.paymentTypes[0] });
+    } else {
+      parts.push({ payment_method: { $in: p.paymentTypes } });
+    }
   }
 
   if (p.salaryGte !== undefined) {
@@ -207,13 +268,13 @@ export function filterParamsToSearchParams(
 ): URLSearchParams {
   const sp = new URLSearchParams();
   if (p.q) sp.set("q", p.q);
-  if (p.prefecture) sp.set("prefecture", p.prefecture);
-  if (p.city) sp.set("city", p.city);
-  if (p.source) sp.set("source", p.source);
-  if (p.employment) sp.set("employment", p.employment);
-  if (p.jobCategory) sp.set("jobCategory", p.jobCategory);
-  if (p.serviceType) sp.set("serviceType", p.serviceType);
-  if (p.paymentType) sp.set("paymentType", p.paymentType);
+  for (const x of p.prefectures ?? []) sp.append("prefecture", x);
+  for (const x of p.cities ?? []) sp.append("city", x);
+  for (const x of p.sources ?? []) sp.append("source", x);
+  for (const x of p.employments ?? []) sp.append("employment", x);
+  for (const x of p.jobCategories ?? []) sp.append("jobCategory", x);
+  for (const x of p.serviceTypes ?? []) sp.append("serviceType", x);
+  for (const x of p.paymentTypes ?? []) sp.append("paymentType", x);
   if (p.salaryGte !== undefined) sp.set("salaryGte", String(p.salaryGte));
   if (p.salaryLte !== undefined) sp.set("salaryLte", String(p.salaryLte));
   if (p.sort && p.sort !== "imported_desc") sp.set("sort", p.sort);

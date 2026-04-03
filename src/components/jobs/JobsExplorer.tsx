@@ -6,6 +6,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type ReactNode,
 } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { LoadingSpinner } from "@/components/ui";
@@ -58,15 +59,49 @@ type FilterOptions = {
 
 function mergeBySourceLists(
   bySource: Record<SourceKey, string[]> | undefined,
-  selectedSource: string | undefined
+  selectedSources: SourceKey[] | undefined
 ): string[] {
   if (!bySource) return [];
-  if (selectedSource && (selectedSource === "job_medley" || selectedSource === "wellme" || selectedSource === "unknown")) {
-    return bySource[selectedSource] ?? [];
-  }
+  const keys: SourceKey[] =
+    selectedSources && selectedSources.length > 0
+      ? selectedSources.filter((k) =>
+          k === "job_medley" || k === "wellme" || k === "unknown"
+        )
+      : (["job_medley", "wellme", "unknown"] as const);
   const set = new Set<string>();
-  for (const k of ["job_medley", "wellme", "unknown"] as const) {
+  for (const k of keys) {
     (bySource[k] ?? []).forEach((x) => set.add(x));
+  }
+  return [...set].sort((a, b) => a.localeCompare(b, "ja"));
+}
+
+/** DB の service_type 文字列を「、」等で分割し、1チェックボックス＝1サービス語に正規化して一意化 */
+function uniqueServiceTypeTokens(
+  bySource: Record<SourceKey, string[]> | undefined,
+  selectedSources: SourceKey[] | undefined
+): string[] {
+  const merged = mergeBySourceLists(bySource, selectedSources);
+  const set = new Set<string>();
+  for (const raw of merged) {
+    const s = raw.trim();
+    if (!s) continue;
+    for (const part of s.split(/[、,，]/)) {
+      const t = part.trim();
+      if (t) set.add(t);
+    }
+  }
+  return [...set].sort((a, b) => a.localeCompare(b, "ja"));
+}
+
+/** URL の配列パラメータとフォーム値の比較用 */
+function sortedJoin(values: string[] | undefined): string {
+  return [...(values ?? [])].sort().join("\0");
+}
+
+function citiesForPrefectureList(prefectures: string[]): string[] {
+  const set = new Set<string>();
+  for (const pr of prefectures) {
+    citiesForTargetPrefecture(pr).forEach((c) => set.add(c));
   }
   return [...set].sort((a, b) => a.localeCompare(b, "ja"));
 }
@@ -78,6 +113,62 @@ function parsedFromUrl(sp: URLSearchParams): ParsedJobsQuery {
 /** 詳細条件の各項目：最小幅を確保しつつ親幅に合わせて折り返す */
 const FILTER_FIELD_GRID =
   "grid gap-x-3 gap-y-2 [grid-template-columns:repeat(auto-fill,minmax(13rem,1fr))]";
+
+/** 複数選択：件数に応じた高さ（最大は max-h、超えたら中だけスクロール）。固定 min-h は付けない（0fr 折りたたみの最小高が膨らむのを防ぐ） */
+const FILTER_CHECKBOX_LIST =
+  "box-border min-h-0 max-h-36 overflow-y-auto overscroll-contain px-2 py-1.5 text-xs";
+
+/** ドロップダウン用：`group` で矢印回転。`relative`+`open:z-*` で重ね表示のパネルが隣接項目より手前に */
+const FILTER_DROPDOWN_DETAILS =
+  "group relative z-0 w-full min-w-0 rounded-lg border border-wash bg-white text-xs shadow-sm transition-shadow duration-200 ease-out open:z-30 open:border-ai/35 open:ring-2 open:ring-ai/15";
+
+/** 一覧を並び順の select と同様に「本文の高さに含めない」オーバーレイとして出す */
+const FILTER_DROPDOWN_PANEL =
+  "absolute left-0 right-0 top-full z-30 mt-1 overflow-hidden rounded-lg border border-wash bg-white shadow-lg";
+
+/** 1 行固定＋長い選択は省略（レイアウトの縦幅を一定に） */
+const FILTER_DROPDOWN_SUMMARY =
+  "flex h-9 min-h-9 w-full shrink-0 cursor-pointer list-none items-center justify-between gap-2 px-2.5 text-left text-xs text-ink outline-none [&::-webkit-details-marker]:hidden hover:bg-paper/40";
+
+/** オーバーレイ内のチェック一覧ラッパー（高さは件数に応じ max-h まで） */
+function FilterDropdownPanel({
+  children,
+  ariaLabel,
+}: {
+  children: ReactNode;
+  ariaLabel: string;
+}) {
+  return (
+    <div className={FILTER_DROPDOWN_PANEL}>
+      <div
+        className="min-h-0 bg-paper/30"
+        role="group"
+        aria-label={ariaLabel}
+      >
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function FilterDropdownChevron() {
+  return (
+    <span
+      className="inline-block shrink-0 text-[10px] text-sumi/55 transition-transform duration-200 ease-out motion-reduce:transition-none motion-reduce:duration-0 group-open:rotate-180"
+      aria-hidden
+    >
+      ▼
+    </span>
+  );
+}
+
+function filterDropdownLabel(
+  selected: string[] | undefined,
+  placeholder: string
+): string {
+  if (selected?.length) return selected.join("、");
+  return placeholder;
+}
 
 const FILTER_INPUT_DEBOUNCE_MS = 420;
 const KEYWORD_DEBOUNCE_MS = 450;
@@ -141,31 +232,37 @@ export function JobsExplorer() {
     [parsed.page, pages]
   );
 
-  /** 市区町村: target-regions のプルダウン（都道府県未選択時は空） */
+  /** 市区町村: 選択した都道府県の対象市区町村の和集合 */
   const cityOptions = useMemo(() => {
-    if (!parsed.prefecture) return [];
-    return citiesForTargetPrefecture(parsed.prefecture);
-  }, [parsed.prefecture]);
+    if (!parsed.prefectures?.length) return [];
+    return citiesForPrefectureList(parsed.prefectures);
+  }, [parsed.prefectures]);
 
   const jobCategoryOptions = useMemo(
-    () => mergeBySourceLists(options?.jobCategoriesBySource, parsed.source),
-    [options?.jobCategoriesBySource, parsed.source]
+    () => mergeBySourceLists(options?.jobCategoriesBySource, parsed.sources),
+    [options?.jobCategoriesBySource, parsed.sources]
   );
 
-  const serviceTypeOptions = useMemo(
-    () => mergeBySourceLists(options?.serviceTypesBySource, parsed.source),
-    [options?.serviceTypesBySource, parsed.source]
-  );
+  const serviceTypeOptions = useMemo(() => {
+    const base = uniqueServiceTypeTokens(
+      options?.serviceTypesBySource,
+      parsed.sources
+    );
+    const extra =
+      parsed.serviceTypes?.filter((x) => !base.includes(x)) ?? [];
+    if (extra.length === 0) return base;
+    return [...new Set([...base, ...extra])].sort((a, b) =>
+      a.localeCompare(b, "ja")
+    );
+  }, [options?.serviceTypesBySource, parsed.sources, parsed.serviceTypes]);
 
   /** DB の distinct に無い値（旧 URL 等）も選択肢に含める */
   const employmentOptions = useMemo(() => {
     const base = options?.employmentTypes ?? [];
-    if (!parsed.employment) return base;
-    if (base.includes(parsed.employment)) return base;
-    return [...base, parsed.employment].sort((a, b) =>
-      a.localeCompare(b, "ja")
-    );
-  }, [options?.employmentTypes, parsed.employment]);
+    const extra = parsed.employments?.filter((e) => !base.includes(e)) ?? [];
+    if (extra.length === 0) return base;
+    return [...base, ...extra].sort((a, b) => a.localeCompare(b, "ja"));
+  }, [options?.employmentTypes, parsed.employments]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -220,18 +317,6 @@ export function JobsExplorer() {
         sortRaw === "name_asc"
           ? sortRaw
           : "imported_desc";
-      const src = get("source");
-      const source =
-        src === "job_medley" || src === "wellme" || src === "unknown"
-          ? src
-          : undefined;
-
-      const paymentRaw = get("paymentType");
-      const paymentType = (PAYMENT_TYPE_OPTIONS as readonly string[]).includes(
-        paymentRaw
-      )
-        ? (paymentRaw as PaymentTypeOption)
-        : undefined;
 
       let salaryGte: number | undefined;
       let salaryLte: number | undefined;
@@ -247,20 +332,68 @@ export function JobsExplorer() {
       }
 
       const p = parsedRef.current;
-      const newPrefecture = get("prefecture") || undefined;
-      const prefectureChanged = newPrefecture !== p.prefecture;
-      const sourceChanged = source !== p.source;
+      const newPrefectures = form
+        .getAll("prefecture")
+        .map((s) => String(s).trim())
+        .filter(Boolean);
+      const prefectureChanged =
+        sortedJoin(newPrefectures) !== sortedJoin(p.prefectures);
+
+      const newSources = form
+        .getAll("source")
+        .map((s) => String(s).trim())
+        .filter((s): s is SourceKey =>
+          s === "job_medley" || s === "wellme" || s === "unknown"
+        );
+      const sourceChanged = sortedJoin(newSources) !== sortedJoin(p.sources);
+
+      const allowedCities = prefectureChanged
+        ? []
+        : citiesForPrefectureList(newPrefectures);
+      const newCitiesRaw = form
+        .getAll("city")
+        .map((s) => String(s).trim())
+        .filter(Boolean);
+      const newCitiesFiltered = prefectureChanged
+        ? []
+        : newCitiesRaw.filter((c) => allowedCities.includes(c));
+
+      const newEmployments = form
+        .getAll("employment")
+        .map((s) => String(s).trim())
+        .filter(Boolean);
+      const newJobCategories = sourceChanged
+        ? []
+        : form
+            .getAll("jobCategory")
+            .map((s) => String(s).trim())
+            .filter(Boolean);
+      const newServiceTypes = sourceChanged
+        ? []
+        : form
+            .getAll("serviceType")
+            .map((s) => String(s).trim())
+            .filter(Boolean);
+
+      const paymentVals = form
+        .getAll("paymentType")
+        .map((s) => String(s).trim())
+        .filter((s) => (PAYMENT_TYPE_OPTIONS as readonly string[]).includes(s));
+      const newPaymentTypes = paymentVals.length
+        ? ([...new Set(paymentVals)] as PaymentTypeOption[])
+        : undefined;
+
       const merged: ParsedJobsQuery = {
         page: 1,
         limit: p.limit,
         q: p.q,
-        prefecture: newPrefecture,
-        city: prefectureChanged ? undefined : get("city") || undefined,
-        source,
-        employment: get("employment") || undefined,
-        jobCategory: sourceChanged ? undefined : get("jobCategory") || undefined,
-        serviceType: sourceChanged ? undefined : get("serviceType") || undefined,
-        paymentType,
+        prefectures: newPrefectures.length ? newPrefectures : undefined,
+        cities: newCitiesFiltered.length ? newCitiesFiltered : undefined,
+        sources: newSources.length ? newSources : undefined,
+        employments: newEmployments.length ? newEmployments : undefined,
+        jobCategories: newJobCategories.length ? newJobCategories : undefined,
+        serviceTypes: newServiceTypes.length ? newServiceTypes : undefined,
+        paymentTypes: newPaymentTypes,
         salaryGte,
         salaryLte,
         sort,
@@ -299,7 +432,7 @@ export function JobsExplorer() {
         return;
       }
       if (t instanceof HTMLInputElement) {
-        scheduleFilterApply(false);
+        scheduleFilterApply(t.type === "checkbox");
       }
     },
     [scheduleFilterApply]
@@ -348,13 +481,13 @@ export function JobsExplorer() {
           求人一覧
         </h1>
         <p className="max-w-3xl text-[11px] leading-snug text-sumi/75">
-          キーワード・詳細条件を変えると一覧が自動で更新されます。CSV
+          キーワード・詳細条件を変えると一覧が自動で更新されます。都道府県・媒体・職種などは複数チェックすると、そのいずれかに一致する求人が表示されます。サービス種別は、求人のサービス表示に選択した語が含まれるものに絞り込みます。CSV
           は結果の上にあるリンクから、現在の条件でダウンロードできます。
         </p>
       </header>
 
       <div
-        className="flex max-h-[50vh] flex-col overflow-hidden rounded-2xl border border-wash bg-white shadow-card"
+        className="flex flex-col rounded-2xl border border-wash bg-white shadow-card"
         aria-label="検索・絞り込み"
       >
         <section
@@ -396,9 +529,7 @@ export function JobsExplorer() {
 
         <div
           className={
-            filtersOpen
-              ? "flex min-h-0 flex-1 flex-col overflow-hidden bg-paper/25"
-              : "shrink-0 bg-paper/25"
+            filtersOpen ? "flex flex-col bg-paper/25" : "shrink-0 bg-paper/25"
           }
         >
           <button
@@ -417,11 +548,11 @@ export function JobsExplorer() {
             <form
               ref={filterFormRef}
               key={`flt-${searchParams.toString()}`}
-              className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 pb-3 pt-0.5 sm:px-4"
+              className="overflow-visible px-3 pb-3 pt-0.5 sm:px-4"
               onSubmit={(e) => e.preventDefault()}
               onChange={handleFilterFormChange}
             >
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:items-start">
+              <div className="grid grid-cols-1 gap-3 overflow-visible sm:grid-cols-2 sm:items-start">
               <fieldset className="min-h-0 rounded-lg border border-ai/25 bg-white/95 px-2.5 py-2 shadow-sm sm:px-3">
                 <legend className="text-[11px] font-semibold text-ink">
                   勤務地
@@ -430,59 +561,127 @@ export function JobsExplorer() {
                   候補は取得対象エリアに合わせています。
                 </p>
                 <div className={FILTER_FIELD_GRID}>
-                  <label className="flex min-w-0 flex-col gap-0.5">
+                  <div className="flex min-w-0 flex-col gap-0.5">
                     <span className="text-[10px] font-medium text-sumi/90">
-                      都道府県
+                      都道府県（複数可）
                     </span>
-                    <select
-                      name="prefecture"
-                      defaultValue={parsed.prefecture ?? ""}
-                      className="w-full min-w-0 rounded-lg border border-wash bg-white px-2 py-1.5 text-xs text-ink shadow-sm outline-none ring-ai/15 focus:ring-2"
-                    >
-                      <option value="">すべて</option>
-                      {prefectureOptions.map((p) => (
-                        <option key={p} value={p}>
-                          {p}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label className="flex min-w-0 flex-col gap-0.5">
-                    <span className="text-[10px] font-medium text-sumi/90">
-                      市区町村
-                    </span>
-                    <select
-                      name="city"
-                      defaultValue={parsed.city ?? ""}
-                      disabled={!parsed.prefecture}
-                      className="w-full min-w-0 rounded-lg border border-wash bg-white px-2 py-1.5 text-xs text-ink shadow-sm outline-none ring-ai/15 focus:ring-2 disabled:cursor-not-allowed disabled:bg-wash/60"
-                    >
-                      <option value="">
-                        {parsed.prefecture ? "すべて" : "先に都道府県を選択"}
-                      </option>
-                      {cityOptions.map((c) => (
-                        <option key={c} value={c}>
-                          {c}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                </div>
-                <details className="mt-2 rounded-md border border-wash/90 bg-paper/50">
-                  <summary className="cursor-pointer px-2 py-1.5 text-[10px] font-medium text-sumi/90">
-                    対象市区町村（参考）
-                  </summary>
-                  <ul className="max-h-24 space-y-1 overflow-y-auto border-t border-wash/80 px-2 py-1.5 text-[10px] leading-tight text-sumi/85">
-                    {TARGET_REGIONS.map((r) => (
-                      <li key={r.prefecture}>
-                        <span className="font-semibold text-ink">
-                          {r.prefecture}
+                    <details className={FILTER_DROPDOWN_DETAILS}>
+                      <summary className={FILTER_DROPDOWN_SUMMARY}>
+                        <span
+                          className="min-w-0 flex-1 truncate"
+                          title={
+                            parsed.prefectures?.length
+                              ? parsed.prefectures.join("、")
+                              : undefined
+                          }
+                        >
+                          {parsed.prefectures?.length
+                            ? parsed.prefectures.join("、")
+                            : "クリックして都道府県を選ぶ"}
                         </span>
-                        <span className="text-sumi/50"> — </span>
-                        {r.cities.join("、")}
-                      </li>
-                    ))}
-                  </ul>
+                        <FilterDropdownChevron />
+                      </summary>
+                      <FilterDropdownPanel ariaLabel="都道府県">
+                        <div className={FILTER_CHECKBOX_LIST}>
+                          {prefectureOptions.map((pr) => (
+                            <label
+                              key={pr}
+                              className="flex cursor-pointer items-center gap-2 py-0.5 text-ink"
+                            >
+                              <input
+                                type="checkbox"
+                                name="prefecture"
+                                value={pr}
+                                defaultChecked={
+                                  parsed.prefectures?.includes(pr) ?? false
+                                }
+                                className="h-3.5 w-3.5 shrink-0 rounded border-wash text-ai focus:ring-ai"
+                              />
+                              <span>{pr}</span>
+                            </label>
+                          ))}
+                        </div>
+                      </FilterDropdownPanel>
+                    </details>
+                  </div>
+                  <div className="flex min-w-0 flex-col gap-0.5">
+                    <span className="text-[10px] font-medium text-sumi/90">
+                      市区町村（複数可）
+                    </span>
+                    {!parsed.prefectures?.length ? (
+                      <div
+                        className="rounded-lg border border-dashed border-wash bg-wash/40 px-2.5 py-2 text-xs text-sumi/60"
+                        role="status"
+                      >
+                        先に都道府県を選んでください
+                      </div>
+                    ) : (
+                      <details className={FILTER_DROPDOWN_DETAILS}>
+                        <summary className={FILTER_DROPDOWN_SUMMARY}>
+                          <span
+                            className="min-w-0 flex-1 truncate"
+                            title={
+                              parsed.cities?.length
+                                ? parsed.cities.join("、")
+                                : undefined
+                            }
+                          >
+                            {parsed.cities?.length
+                              ? parsed.cities.join("、")
+                              : "クリックして市区町村を選ぶ"}
+                          </span>
+                          <FilterDropdownChevron />
+                        </summary>
+                        <FilterDropdownPanel ariaLabel="市区町村">
+                          <div className={FILTER_CHECKBOX_LIST}>
+                            {cityOptions.map((c) => (
+                              <label
+                                key={c}
+                                className="flex cursor-pointer items-center gap-2 py-0.5 text-ink"
+                              >
+                                <input
+                                  type="checkbox"
+                                  name="city"
+                                  value={c}
+                                  defaultChecked={
+                                    parsed.cities?.includes(c) ?? false
+                                  }
+                                  className="h-3.5 w-3.5 shrink-0 rounded border-wash text-ai focus:ring-ai"
+                                />
+                                <span>{c}</span>
+                              </label>
+                            ))}
+                          </div>
+                        </FilterDropdownPanel>
+                      </details>
+                    )}
+                  </div>
+                </div>
+                <details className="group mt-2 rounded-md border border-wash/90 bg-paper/50 transition-shadow duration-200 ease-out open:border-wash">
+                  <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-2 py-1.5 text-[10px] font-medium text-sumi/90 [&::-webkit-details-marker]:hidden">
+                    <span>対象市区町村（参考）</span>
+                    <span
+                      className="inline-block shrink-0 text-sumi/45 transition-transform duration-200 ease-out motion-reduce:transition-none group-open:rotate-180"
+                      aria-hidden
+                    >
+                      ▼
+                    </span>
+                  </summary>
+                  <div className="grid grid-rows-[0fr] transition-[grid-template-rows] duration-200 ease-out motion-reduce:transition-none motion-reduce:duration-0 group-open:grid-rows-[1fr]">
+                    <div className="min-h-0 overflow-hidden">
+                      <ul className="max-h-24 space-y-1 overflow-y-auto border-t border-wash/80 px-2 py-1.5 text-[10px] leading-tight text-sumi/85">
+                        {TARGET_REGIONS.map((r) => (
+                          <li key={r.prefecture}>
+                            <span className="font-semibold text-ink">
+                              {r.prefecture}
+                            </span>
+                            <span className="text-sumi/50"> — </span>
+                            {r.cities.join("、")}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  </div>
                 </details>
               </fieldset>
 
@@ -491,74 +690,191 @@ export function JobsExplorer() {
                   求人の条件
                 </legend>
                 <div className={`mt-0.5 ${FILTER_FIELD_GRID}`}>
-                  <label className="flex min-w-0 flex-col gap-0.5">
+                  <div className="flex min-w-0 flex-col gap-0.5">
                     <span className="text-[10px] font-medium text-sumi/90">
-                      媒体名
+                      媒体名（複数可）
                     </span>
-                    <select
-                      name="source"
-                      defaultValue={parsed.source ?? ""}
-                      className="w-full min-w-0 rounded-lg border border-wash bg-white px-2 py-1.5 text-xs text-ink shadow-sm outline-none ring-ai/15 focus:ring-2"
-                    >
-                      <option value="">すべて</option>
-                      <option value="job_medley">
-                        {sourceLabel("job_medley")}
-                      </option>
-                      <option value="wellme">{sourceLabel("wellme")}</option>
-                      <option value="unknown">{sourceLabel("unknown")}</option>
-                    </select>
-                  </label>
-                  <label className="flex min-w-0 flex-col gap-0.5">
+                    <details className={FILTER_DROPDOWN_DETAILS}>
+                      <summary className={FILTER_DROPDOWN_SUMMARY}>
+                        <span
+                          className="min-w-0 flex-1 truncate"
+                          title={
+                            parsed.sources?.length
+                              ? parsed.sources
+                                  .map((k) => sourceLabel(k))
+                                  .join("、")
+                              : undefined
+                          }
+                        >
+                          {parsed.sources?.length
+                            ? parsed.sources
+                                .map((k) => sourceLabel(k))
+                                .join("、")
+                            : "クリックして媒体を選ぶ"}
+                        </span>
+                        <FilterDropdownChevron />
+                      </summary>
+                      <FilterDropdownPanel ariaLabel="媒体名">
+                        <div className={FILTER_CHECKBOX_LIST}>
+                          {(
+                            [
+                              ["job_medley", sourceLabel("job_medley")],
+                              ["wellme", sourceLabel("wellme")],
+                              ["unknown", sourceLabel("unknown")],
+                            ] as const
+                          ).map(([key, label]) => (
+                            <label
+                              key={key}
+                              className="flex cursor-pointer items-center gap-2 py-0.5 text-ink"
+                            >
+                              <input
+                                type="checkbox"
+                                name="source"
+                                value={key}
+                                defaultChecked={
+                                  parsed.sources?.includes(key) ?? false
+                                }
+                                className="h-3.5 w-3.5 shrink-0 rounded border-wash text-ai focus:ring-ai"
+                              />
+                              <span>{label}</span>
+                            </label>
+                          ))}
+                        </div>
+                      </FilterDropdownPanel>
+                    </details>
+                  </div>
+                  <div className="flex min-w-0 flex-col gap-0.5">
                     <span className="text-[10px] font-medium text-sumi/90">
-                      雇用形態
+                      雇用形態（複数可）
                     </span>
-                    <select
-                      name="employment"
-                      defaultValue={parsed.employment ?? ""}
-                      className="w-full min-w-0 rounded-lg border border-wash bg-white px-2 py-1.5 text-xs text-ink shadow-sm outline-none ring-ai/15 focus:ring-2"
-                    >
-                      <option value="">すべて</option>
-                      {employmentOptions.map((e) => (
-                        <option key={e} value={e}>
-                          {e}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label className="flex min-w-0 flex-col gap-0.5">
+                    <details className={FILTER_DROPDOWN_DETAILS}>
+                      <summary className={FILTER_DROPDOWN_SUMMARY}>
+                        <span
+                          className="min-w-0 flex-1 truncate"
+                          title={
+                            parsed.employments?.length
+                              ? parsed.employments.join("、")
+                              : undefined
+                          }
+                        >
+                          {filterDropdownLabel(
+                            parsed.employments,
+                            "クリックして雇用形態を選ぶ"
+                          )}
+                        </span>
+                        <FilterDropdownChevron />
+                      </summary>
+                      <FilterDropdownPanel ariaLabel="雇用形態">
+                        <div className={FILTER_CHECKBOX_LIST}>
+                          {employmentOptions.map((e) => (
+                            <label
+                              key={e}
+                              className="flex cursor-pointer items-center gap-2 py-0.5 text-ink"
+                            >
+                              <input
+                                type="checkbox"
+                                name="employment"
+                                value={e}
+                                defaultChecked={
+                                  parsed.employments?.includes(e) ?? false
+                                }
+                                className="h-3.5 w-3.5 shrink-0 rounded border-wash text-ai focus:ring-ai"
+                              />
+                              <span className="break-all">{e}</span>
+                            </label>
+                          ))}
+                        </div>
+                      </FilterDropdownPanel>
+                    </details>
+                  </div>
+                  <div className="flex min-w-0 flex-col gap-0.5">
                     <span className="text-[10px] font-medium text-sumi/90">
-                      職種（job_category）
+                      職種（複数可）
                     </span>
-                    <select
-                      name="jobCategory"
-                      defaultValue={parsed.jobCategory ?? ""}
-                      className="w-full min-w-0 rounded-lg border border-wash bg-white px-2 py-1.5 text-xs text-ink shadow-sm outline-none ring-ai/15 focus:ring-2"
-                    >
-                      <option value="">すべて</option>
-                      {jobCategoryOptions.map((c) => (
-                        <option key={c} value={c}>
-                          {c}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label className="flex min-w-0 flex-col gap-0.5">
+                    <details className={FILTER_DROPDOWN_DETAILS}>
+                      <summary className={FILTER_DROPDOWN_SUMMARY}>
+                        <span
+                          className="min-w-0 flex-1 truncate"
+                          title={
+                            parsed.jobCategories?.length
+                              ? parsed.jobCategories.join("、")
+                              : undefined
+                          }
+                        >
+                          {filterDropdownLabel(
+                            parsed.jobCategories,
+                            "クリックして職種を選ぶ"
+                          )}
+                        </span>
+                        <FilterDropdownChevron />
+                      </summary>
+                      <FilterDropdownPanel ariaLabel="職種">
+                        <div className={FILTER_CHECKBOX_LIST}>
+                          {jobCategoryOptions.map((c) => (
+                            <label
+                              key={c}
+                              className="flex cursor-pointer items-center gap-2 py-0.5 text-ink"
+                            >
+                              <input
+                                type="checkbox"
+                                name="jobCategory"
+                                value={c}
+                                defaultChecked={
+                                  parsed.jobCategories?.includes(c) ?? false
+                                }
+                                className="h-3.5 w-3.5 shrink-0 rounded border-wash text-ai focus:ring-ai"
+                              />
+                              <span className="break-all">{c}</span>
+                            </label>
+                          ))}
+                        </div>
+                      </FilterDropdownPanel>
+                    </details>
+                  </div>
+                  <div className="flex min-w-0 flex-col gap-0.5">
                     <span className="text-[10px] font-medium text-sumi/90">
-                      サービス種別
+                      サービス種別（複数可・表示に含む）
                     </span>
-                    <select
-                      name="serviceType"
-                      defaultValue={parsed.serviceType ?? ""}
-                      className="w-full min-w-0 rounded-lg border border-wash bg-white px-2 py-1.5 text-xs text-ink shadow-sm outline-none ring-ai/15 focus:ring-2"
-                    >
-                      <option value="">すべて</option>
-                      {serviceTypeOptions.map((c) => (
-                        <option key={c} value={c}>
-                          {c}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
+                    <details className={FILTER_DROPDOWN_DETAILS}>
+                      <summary className={FILTER_DROPDOWN_SUMMARY}>
+                        <span
+                          className="min-w-0 flex-1 truncate"
+                          title={
+                            parsed.serviceTypes?.length
+                              ? parsed.serviceTypes.join("、")
+                              : undefined
+                          }
+                        >
+                          {filterDropdownLabel(
+                            parsed.serviceTypes,
+                            "クリックしてサービス種別を選ぶ"
+                          )}
+                        </span>
+                        <FilterDropdownChevron />
+                      </summary>
+                      <FilterDropdownPanel ariaLabel="サービス種別">
+                        <div className={FILTER_CHECKBOX_LIST}>
+                          {serviceTypeOptions.map((c) => (
+                            <label
+                              key={c}
+                              className="flex cursor-pointer items-center gap-2 py-0.5 text-ink"
+                            >
+                              <input
+                                type="checkbox"
+                                name="serviceType"
+                                value={c}
+                                defaultChecked={
+                                  parsed.serviceTypes?.includes(c) ?? false
+                                }
+                                className="h-3.5 w-3.5 shrink-0 rounded border-wash text-ai focus:ring-ai"
+                              />
+                              <span className="break-all">{c}</span>
+                            </label>
+                          ))}
+                        </div>
+                      </FilterDropdownPanel>
+                    </details>
+                  </div>
                 </div>
               </fieldset>
 
@@ -567,65 +883,93 @@ export function JobsExplorer() {
                   給与（CSV の支給区分・金額）
                 </legend>
                 <p className="mb-1.5 text-[10px] leading-snug text-sumi/70">
-                  月給・時給・日給で絞り込みます。金額は DB
-                  の数値に合わせた目安です。
+                  月給・時給・日給で絞り込みます。
                 </p>
-                <div className={`mt-0.5 ${FILTER_FIELD_GRID}`}>
-                  <label className="flex min-w-0 flex-col gap-0.5">
-                    <span className="text-[10px] font-medium text-sumi/90">
-                      支給区分
+                <div className="mt-0.5 space-y-3">
+                  <div className="min-w-0">
+                    <span className="mb-0.5 block text-[10px] font-medium text-sumi/90">
+                      支給区分（複数可）
                     </span>
-                    <select
-                      name="paymentType"
-                      defaultValue={parsed.paymentType ?? ""}
-                      className="w-full min-w-0 rounded-lg border border-wash bg-white px-2 py-1.5 text-xs text-ink shadow-sm outline-none ring-ai/15 focus:ring-2"
-                    >
-                      <option value="">すべて</option>
-                      {PAYMENT_TYPE_OPTIONS.map((pm) => (
-                        <option key={pm} value={pm}>
-                          {pm}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label className="flex min-w-0 flex-col gap-0.5">
-                    <span className="text-[10px] font-medium text-sumi/90">
-                      下限（万円目安）
-                    </span>
-                    <input
-                      name="salaryGte"
-                      type="number"
-                      inputMode="numeric"
-                      min={0}
-                      defaultValue={
-                        parsed.salaryGte !== undefined
-                          ? String(parsed.salaryGte)
-                          : ""
-                      }
-                      placeholder="例：300"
-                      title="salary_max がこの値以上の求人"
-                      className="w-full min-w-0 rounded-lg border border-wash bg-white px-2 py-1.5 text-xs text-ink shadow-sm outline-none ring-ai/15 focus:ring-2"
-                    />
-                  </label>
-                  <label className="flex min-w-0 flex-col gap-0.5">
-                    <span className="text-[10px] font-medium text-sumi/90">
-                      上限（万円目安）
-                    </span>
-                    <input
-                      name="salaryLte"
-                      type="number"
-                      inputMode="numeric"
-                      min={0}
-                      defaultValue={
-                        parsed.salaryLte !== undefined
-                          ? String(parsed.salaryLte)
-                          : ""
-                      }
-                      placeholder="例：500"
-                      title="salary_min がこの値以下の求人"
-                      className="w-full min-w-0 rounded-lg border border-wash bg-white px-2 py-1.5 text-xs text-ink shadow-sm outline-none ring-ai/15 focus:ring-2"
-                    />
-                  </label>
+                    <details className={FILTER_DROPDOWN_DETAILS}>
+                      <summary className={FILTER_DROPDOWN_SUMMARY}>
+                        <span
+                          className="min-w-0 flex-1 truncate"
+                          title={
+                            parsed.paymentTypes?.length
+                              ? parsed.paymentTypes.join("、")
+                              : undefined
+                          }
+                        >
+                          {filterDropdownLabel(
+                            parsed.paymentTypes,
+                            "クリックして支給区分を選ぶ"
+                          )}
+                        </span>
+                        <FilterDropdownChevron />
+                      </summary>
+                      <FilterDropdownPanel ariaLabel="支給区分">
+                        <div className={FILTER_CHECKBOX_LIST}>
+                          {PAYMENT_TYPE_OPTIONS.map((pm) => (
+                            <label
+                              key={pm}
+                              className="flex cursor-pointer items-center gap-2 py-0.5 text-ink"
+                            >
+                              <input
+                                type="checkbox"
+                                name="paymentType"
+                                value={pm}
+                                defaultChecked={
+                                  parsed.paymentTypes?.includes(pm) ?? false
+                                }
+                                className="h-3.5 w-3.5 shrink-0 rounded border-wash text-ai focus:ring-ai"
+                              />
+                              <span>{pm}</span>
+                            </label>
+                          ))}
+                        </div>
+                      </FilterDropdownPanel>
+                    </details>
+                  </div>
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:items-start">
+                    <label className="flex min-w-0 flex-col gap-0.5">
+                      <span className="text-[10px] font-medium text-sumi/90">
+                        下限（万円目安）
+                      </span>
+                      <input
+                        name="salaryGte"
+                        type="number"
+                        inputMode="numeric"
+                        min={0}
+                        defaultValue={
+                          parsed.salaryGte !== undefined
+                            ? String(parsed.salaryGte)
+                            : ""
+                        }
+                        placeholder="例：300"
+                        title="salary_max がこの値以上の求人"
+                        className="w-full min-w-0 rounded-lg border border-wash bg-white px-2 py-1.5 text-xs text-ink shadow-sm outline-none ring-ai/15 focus:ring-2"
+                      />
+                    </label>
+                    <label className="flex min-w-0 flex-col gap-0.5">
+                      <span className="text-[10px] font-medium text-sumi/90">
+                        上限（万円目安）
+                      </span>
+                      <input
+                        name="salaryLte"
+                        type="number"
+                        inputMode="numeric"
+                        min={0}
+                        defaultValue={
+                          parsed.salaryLte !== undefined
+                            ? String(parsed.salaryLte)
+                            : ""
+                        }
+                        placeholder="例：500"
+                        title="salary_min がこの値以下の求人"
+                        className="w-full min-w-0 rounded-lg border border-wash bg-white px-2 py-1.5 text-xs text-ink shadow-sm outline-none ring-ai/15 focus:ring-2"
+                      />
+                    </label>
+                  </div>
                 </div>
               </fieldset>
 

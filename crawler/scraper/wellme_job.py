@@ -6,6 +6,8 @@ employment_type, salary_min, salary_max, service_type, job_url.
 from __future__ import annotations
 
 import re
+import traceback
+from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 from urllib.parse import urljoin, urlparse, parse_qs, urlencode, urlunparse
@@ -165,53 +167,85 @@ def scrape_wellme_area(
     prefecture: str,
     city: str,
     concurrency: int = settings.job_detail_concurrency,
-) -> list[dict[str, Any]]:
+) -> Iterator[tuple[int, list[dict[str, Any]]]]:
     """
     Scrape WellMe Job (kaigojob.com) for a given search URL.
     Yields (page_no, jobs) for each search page.
     """
-    all_jobs: list[dict[str, Any]] = []
     page_no = 1
     seen_urls: set[str] = set()
+    consecutive_failures = 0
+    max_consecutive_failures = 5
 
     while True:
-        page_url = _add_page_to_url(search_url, page_no)
-        html = _fetch(page_url)
-        if not html:
-            break
+        try:
+            page_url = _add_page_to_url(search_url, page_no)
+            html = _fetch(page_url)
+            if not html:
+                consecutive_failures += 1
+                print(
+                    f"  [エラー] WellMe 検索ページ {page_no}: HTML 取得失敗（スキップ）",
+                    flush=True,
+                )
+                if page_no == 1 or consecutive_failures >= max_consecutive_failures:
+                    break
+                page_no += 1
+                continue
 
-        job_links = _extract_job_links(html)
-        if not job_links:
-            break
+            job_links = _extract_job_links(html)
+            if not job_links:
+                print(f"  WellMe 検索ページ {page_no}: 求人なし（終了）", flush=True)
+                break
 
-        results: list[dict[str, Any] | None] = [None] * len(job_links)
+            results: list[dict[str, Any] | None] = [None] * len(job_links)
 
-        def fetch_one(args: tuple[int, str]) -> tuple[int, dict[str, Any] | None]:
-            idx, url = args
-            if url in seen_urls:
-                return idx, None
-            h = _fetch(url)
-            if not h:
-                return idx, None
-            return idx, _parse_job_detail(h, url, prefecture, city)
+            def fetch_one(args: tuple[int, str]) -> tuple[int, dict[str, Any] | None]:
+                idx, u = args
+                try:
+                    if u in seen_urls:
+                        return idx, None
+                    h = _fetch(u)
+                    if not h:
+                        return idx, None
+                    return idx, _parse_job_detail(h, u, prefecture, city)
+                except Exception:
+                    return idx, None
 
-        with ThreadPoolExecutor(max_workers=concurrency) as ex:
-            futures = {ex.submit(fetch_one, (i, url)): i for i, url in enumerate(job_links)}
-            for future in as_completed(futures):
-                idx, job_dict = future.result()
-                results[idx] = job_dict
-                if job_dict:
-                    seen_urls.add(job_dict["job_url"])
-                    name = (job_dict.get("facility_name") or "")[:25]
-                    if len(job_dict.get("facility_name") or "") > 25:
-                        name += "..."
-                    jt = job_dict.get("job_type", "")
-                    print(f"      [{idx + 1}/{len(job_links)}] {name} | {jt}", flush=True)
+            with ThreadPoolExecutor(max_workers=concurrency) as ex:
+                futures = {ex.submit(fetch_one, (i, u)): i for i, u in enumerate(job_links)}
+                for future in as_completed(futures):
+                    try:
+                        idx, job_dict = future.result()
+                    except Exception:
+                        continue
+                    results[idx] = job_dict
+                    if job_dict:
+                        seen_urls.add(job_dict["job_url"])
+                        name = (job_dict.get("facility_name") or "")[:25]
+                        if len(job_dict.get("facility_name") or "") > 25:
+                            name += "..."
+                        jt = job_dict.get("job_type", "")
+                        print(f"      [{idx + 1}/{len(job_links)}] {name} | {jt}", flush=True)
 
-        page_jobs = [r for r in results if r is not None]
-        all_jobs.extend(page_jobs)
-        yield page_no, page_jobs
+            page_jobs = [r for r in results if r is not None]
+            consecutive_failures = 0
+            yield page_no, page_jobs
 
-        if len(job_links) < 20:
-            break
-        page_no += 1
+            if len(job_links) < 20:
+                break
+            page_no += 1
+        except Exception as e:
+            consecutive_failures += 1
+            print(
+                f"  [エラー] WellMe 検索ページ {page_no}: {e!s}",
+                flush=True,
+            )
+            traceback.print_exc()
+            if consecutive_failures >= max_consecutive_failures:
+                print(
+                    f"  [エラー] WellMe 同一地域で連続 {max_consecutive_failures} 回失敗のため打ち切り。",
+                    flush=True,
+                )
+                break
+            page_no += 1
+            continue

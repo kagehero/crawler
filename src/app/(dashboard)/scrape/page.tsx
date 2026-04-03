@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { LoadingSpinner, ProgressBar } from "@/components/ui";
 
 type ScrapeConfig = {
@@ -12,18 +12,20 @@ type ScrapeConfig = {
   python: string;
 };
 
+type ImportSummary = {
+  upserted: number;
+  modified: number;
+  rowCount: number;
+  runId: string;
+};
+
 type ScrapeResult = {
   ok: boolean;
   exitCode: number | null;
   durationMs: number;
   stdout?: string;
   stderr?: string;
-  import?: {
-    upserted: number;
-    modified: number;
-    rowCount: number;
-    runId: string;
-  } | null;
+  import?: ImportSummary | null;
   error?: string;
 };
 
@@ -34,6 +36,10 @@ export default function ScrapePage() {
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState<ScrapeResult | null>(null);
   const [loadErr, setLoadErr] = useState<string | null>(null);
+  /** 実行中のストリーミングログ */
+  const [liveStdout, setLiveStdout] = useState("");
+  const [liveStderr, setLiveStderr] = useState("");
+  const logEndRef = useRef<HTMLDivElement>(null);
 
   const loadCfg = useCallback(() => {
     fetch("/api/scrape/run", { credentials: "include" })
@@ -51,33 +57,149 @@ export default function ScrapePage() {
     loadCfg();
   }, [loadCfg]);
 
+  useEffect(() => {
+    if (!running) return;
+    logEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [liveStdout, liveStderr, running]);
+
   async function runScrape() {
     setResult(null);
+    setLiveStdout("");
+    setLiveStderr("");
     setRunning(true);
+
     const body: { maxAreas?: number; importAfter: boolean } = {
       importAfter,
     };
     const n = parseInt(maxAreas, 10);
     if (!Number.isNaN(n) && n > 0) body.maxAreas = n;
 
-    const r = await fetch("/api/scrape/run", {
-      method: "POST",
-      credentials: "include",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    const data = (await r.json()) as ScrapeResult;
-    setRunning(false);
-    if (!r.ok) {
+    let finalResult: ScrapeResult = {
+      ok: false,
+      exitCode: null,
+      durationMs: 0,
+    };
+    let accOut = "";
+    let accErr = "";
+
+    try {
+      const r = await fetch("/api/scrape/run/stream", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+
+      if (!r.ok || !r.body) {
+        const errText = await r.text();
+        let msg = `HTTP ${r.status}`;
+        try {
+          const line = errText.split("\n").find(Boolean);
+          if (line) msg = (JSON.parse(line) as { message?: string }).message ?? msg;
+        } catch {
+          if (errText) msg = errText.slice(0, 200);
+        }
+        setResult({
+          ok: false,
+          exitCode: null,
+          durationMs: 0,
+          error: msg,
+        });
+        setRunning(false);
+        return;
+      }
+
+      const reader = r.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          let msg: Record<string, unknown>;
+          try {
+            msg = JSON.parse(line) as Record<string, unknown>;
+          } catch {
+            continue;
+          }
+
+          const type = msg.type as string;
+          if (type === "log") {
+            const stream = msg.stream as string;
+            const text = String(msg.text ?? "");
+            if (stream === "stderr") {
+              accErr += text;
+              setLiveStderr(accErr);
+            } else {
+              accOut += text;
+              setLiveStdout(accOut);
+            }
+          } else if (type === "scrape_done") {
+            finalResult = {
+              ...finalResult,
+              exitCode: msg.exitCode as number | null,
+              durationMs: Number(msg.durationMs ?? 0),
+              ok: (msg.exitCode as number | null) === 0,
+            };
+          } else if (type === "import_done") {
+            finalResult = {
+              ...finalResult,
+              import: {
+                upserted: Number(msg.upserted),
+                modified: Number(msg.modified),
+                rowCount: Number(msg.rowCount),
+                runId: String(msg.runId),
+              },
+            };
+          } else if (type === "error") {
+            finalResult = {
+              ...finalResult,
+              error: [finalResult.error, String(msg.message ?? "")]
+                .filter(Boolean)
+                .join("\n"),
+              ok: false,
+            };
+          } else if (type === "complete") {
+            finalResult = {
+              ...finalResult,
+              ok: Boolean(msg.ok),
+            };
+          }
+        }
+      }
+
+      if (buffer.trim()) {
+        try {
+          const msg = JSON.parse(buffer) as Record<string, unknown>;
+          if (msg.type === "complete") {
+            finalResult = { ...finalResult, ok: Boolean(msg.ok) };
+          }
+        } catch {
+          /* ignore */
+        }
+      }
+
+      setResult({
+        ...finalResult,
+        stdout: accOut,
+        stderr: accErr,
+      });
+    } catch (e) {
       setResult({
         ok: false,
         exitCode: null,
         durationMs: 0,
-        error: data.error ?? `HTTP ${r.status}`,
+        error: e instanceof Error ? e.message : String(e),
       });
-      return;
+    } finally {
+      setRunning(false);
     }
-    setResult(data);
   }
 
   if (loadErr) {
@@ -102,48 +224,10 @@ export default function ScrapePage() {
         <h1 className="text-2xl font-bold tracking-tight text-ink sm:text-3xl">
           スクレイピング
         </h1>
+        <p className="text-sm text-sumi/80">
+          実行中は Python の標準出力・標準エラーをリアルタイムで表示します。
+        </p>
       </header>
-
-      {/* {!cfg.configured ? (
-        <div className="rounded-2xl border border-amber-200 bg-amber-50/90 px-5 py-4 text-sm text-amber-950">
-          <p className="font-medium">スクレイパー同梱フォルダが見つかりません</p>
-          <p className="mt-2 text-amber-900/90">
-            <code className="rounded bg-white/80 px-1">crawler/main.py</code>{" "}
-            があることを確認し、ターミナルではリポジトリルートで{" "}
-            <code className="rounded bg-white/80 px-1">npm run dev</code>{" "}
-            を実行してください。
-          </p>
-        </div>
-      ) : (
-        <div className="rounded-2xl border border-wash bg-white p-6 shadow-card">
-          <h3 className="text-sm font-semibold text-ink">
-            現在の設定
-            {cfg.bundle ? (
-              <span className="ml-2 font-mono text-xs font-normal text-sumi/70">
-                （{cfg.bundle}）
-              </span>
-            ) : null}
-          </h3>
-          <dl className="mt-3 grid gap-2 text-sm text-sumi">
-            <div className="flex flex-wrap gap-x-2">
-              <dt className="text-sumi/70">Python:</dt>
-              <dd className="font-mono text-xs">{cfg.python}</dd>
-            </div>
-            <div className="flex flex-wrap gap-x-2">
-              <dt className="text-sumi/70">入力ファイル:</dt>
-              <dd className="font-mono text-xs">{cfg.input}</dd>
-            </div>
-            <div className="flex flex-wrap gap-x-2">
-              <dt className="text-sumi/70">出力 CSV:</dt>
-              <dd className="font-mono text-xs">{cfg.output}</dd>
-            </div>
-            <div className="flex flex-wrap gap-x-2">
-              <dt className="text-sumi/70">ページ別 CSV 先:</dt>
-              <dd className="font-mono text-xs">{cfg.outputDir}</dd>
-            </div>
-          </dl>
-        </div>
-      )} */}
 
       <form
         className="rounded-2xl border border-wash bg-white p-8 shadow-card"
@@ -186,13 +270,36 @@ export default function ScrapePage() {
         </button>
         {running ? (
           <div className="mt-4 space-y-3">
-            <ProgressBar indeterminate label="Playwright 実行中（完了までしばらくかかります）" />
+            <ProgressBar
+              indeterminate
+              label="実行中（ログは下に逐次表示されます）"
+            />
             <LoadingSpinner size="sm" />
           </div>
         ) : null}
       </form>
 
-      {result ? (
+      {(running || liveStdout || liveStderr) ? (
+        <div className="overflow-hidden rounded-xl border border-wash bg-stone-900/95 shadow-card">
+          <p className="border-b border-stone-700 px-3 py-2 text-xs font-medium text-stone-400">
+            ログ（リアルタイム）
+          </p>
+          <pre className="max-h-[min(60vh,28rem)] overflow-auto p-4 font-mono text-[11px] leading-relaxed text-stone-100 whitespace-pre-wrap break-words">
+            {liveStderr ? (
+              <span className="text-amber-200/95">{liveStderr}</span>
+            ) : null}
+            {liveStdout ? (
+              <span className="text-stone-100">{liveStdout}</span>
+            ) : null}
+            {!liveStdout && !liveStderr && running ? (
+              <span className="text-stone-500">出力を待っています…</span>
+            ) : null}
+            <div ref={logEndRef} />
+          </pre>
+        </div>
+      ) : null}
+
+      {result && !running ? (
         <div className="space-y-3">
           <div
             className={`rounded-xl border px-4 py-3 text-sm ${
@@ -208,7 +315,7 @@ export default function ScrapePage() {
                 ? ` · ${(result.durationMs / 1000).toFixed(1)} 秒`
                 : ""}
             </p>
-            {result.error ? <p className="mt-1">{result.error}</p> : null}
+            {result.error ? <p className="mt-1 whitespace-pre-wrap">{result.error}</p> : null}
             {result.import ? (
               <p className="mt-2 text-emerald-900">
                 MongoDB: 新規 upsert {result.import.upserted} / 更新{" "}
@@ -219,7 +326,7 @@ export default function ScrapePage() {
           {(result.stderr || result.stdout) ? (
             <div className="overflow-hidden rounded-xl border border-wash bg-stone-900/95">
               <p className="border-b border-stone-700 px-3 py-2 text-xs text-stone-400">
-                ログ（末尾）
+                ログ（完了時スナップショット）
               </p>
               <pre className="max-h-80 overflow-auto p-4 font-mono text-xs text-stone-100 whitespace-pre-wrap">
                 {result.stderr ? `[stderr]\n${result.stderr}\n\n` : ""}
