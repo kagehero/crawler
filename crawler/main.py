@@ -106,6 +106,12 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--output", default="data/output.csv")
     parser.add_argument("--output-dir", default="data/pages", help="Directory for per-page CSV files")
     parser.add_argument("--max-areas", type=int, default=None)
+    parser.add_argument(
+        "--area-indices",
+        type=str,
+        default=None,
+        help="comma-separated 0-based row indices after load (e.g. 0,2,5). If set, --max-areas is ignored.",
+    )
     parser.add_argument("--excel", action="store_true", help="Use Excel input (resolve city_id via API)")
     args = parser.parse_args(argv)
 
@@ -118,7 +124,16 @@ def main(argv: list[str]) -> int:
     else:
         areas = load_areas_from_site_url_file(str(input_path))
 
-    if args.max_areas is not None:
+    if args.area_indices:
+        idxs: list[int] = []
+        for part in args.area_indices.split(","):
+            part = part.strip()
+            if not part:
+                continue
+            idxs.append(int(part))
+        idxs = sorted(set(idxs))
+        areas = [areas[i] for i in idxs if 0 <= i < len(areas)]
+    elif args.max_areas is not None:
         areas = areas[: args.max_areas]
 
     output_dir = Path(args.output_dir)
