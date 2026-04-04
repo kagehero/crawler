@@ -9,13 +9,11 @@ from typing import Any
 from urllib.request import Request, urlopen
 
 from bs4 import BeautifulSoup
-from playwright.sync_api import sync_playwright
-from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from config import JOB_MEDLEY_BASE_URL, SCRAPING_USER_AGENT, settings
+from parser.salary_parser import parse_payment_method, parse_salary_min_max
 
 HTTP_USER_AGENT = SCRAPING_USER_AGENT
-from parser.salary_parser import parse_payment_method, parse_salary_min_max
 
 
 # URL path → 職種（固定選択肢）
@@ -104,96 +102,52 @@ class JobMedleyScraper:
     """
     Scrape job-medley.com using:
       /search/?prefecture_id={pref_id}&city_id={city_id}&page={page}
-    Extract: 施設名, 勤務地(都道府県/市区町村), 職種, 雇用形態, 給与(下限/上限), サービス形態.
+    検索一覧は SSR のため HTTP + HTML パース（WellMe と同様。Playwright は使わない）。
+    求人詳細は HTTP 並列取得。
     """
 
     def __init__(
         self,
-        headless: bool = True,
-        navigation_timeout_ms: int = settings.navigation_timeout_ms,
-        request_timeout_ms: int = settings.request_timeout_ms,
-        wait_until: str = settings.wait_until,
         throttle_sleep_s: float = settings.throttle_sleep_s,
         job_detail_concurrency: int = settings.job_detail_concurrency,
     ) -> None:
-        self.headless = headless
-        self.navigation_timeout_ms = navigation_timeout_ms
-        self.request_timeout_ms = request_timeout_ms
-        self.wait_until = wait_until
         self.throttle_sleep_s = throttle_sleep_s
         self.job_detail_concurrency = job_detail_concurrency
-
-    def __enter__(self) -> "JobMedleyScraper":
-        print("[ブラウザ] 起動中...", flush=True)
-        self._pw = sync_playwright().start()
-        self._browser = self._pw.chromium.launch(headless=self.headless)
-        print("[ブラウザ] 準備完了", flush=True)
-        self._context = self._browser.new_context(
-            user_agent=SCRAPING_USER_AGENT,
-            locale="ja-JP",
-        )
-        # 画像・フォント等を止めて DOMContentLoaded までの待ちを短縮（一覧は HTML のみで十分）
-        def _route_block_heavy(route) -> None:
-            try:
-                if route.request.resource_type in ("image", "media", "font"):
-                    route.abort()
-                else:
-                    route.continue_()
-            except Exception:
-                try:
-                    route.continue_()
-                except Exception:
-                    pass
-
-        self._context.route("**/*", _route_block_heavy)
-        return self
-
-    def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
-        try:
-            self._context.close()
-        finally:
-            self._browser.close()
-            self._pw.stop()
-
-    def _new_page(self):
-        return self._context.new_page()
-
-    @retry(
-        retry=retry_if_exception_type((Exception,)),
-        stop=stop_after_attempt(5),
-        wait=wait_exponential(min=2, max=30),
-        reraise=True,
-    )
-    def _goto(self, page, url: str) -> None:
-        """
-        1) commit でナビゲーション確定（重いリソースは route でブロック済み）
-        2) domcontentloaded を別タイムアウトで待つ
-        commit だけだと未描画のことがあるため。goto を domcontentloaded 一発にすると遅いページで 45s 超えしやすい。
-        第1段・第2段でタイムアウトを半分ずつ割り、合計が navigation_timeout_ms を超えないようにする。
-        """
-        half = max(30_000, self.navigation_timeout_ms // 2)
-        page.goto(url, timeout=half, wait_until=self.wait_until)
-        try:
-            page.wait_for_load_state("domcontentloaded", timeout=half)
-        except Exception:
-            # 最低限 body があればリンク抽出を試す
-            page.wait_for_selector("body", state="attached", timeout=15_000)
 
     def _build_search_url(self, prefecture_id: int, city_id: int, page_no: int) -> str:
         return f"{JOB_MEDLEY_BASE_URL}/search/?prefecture_id={prefecture_id}&city_id={city_id}&page={page_no}"
 
-    def _extract_total_count_from_search_page(self, page) -> int | None:
-        """
-        Extract 該当件数 X件 from search results page.
-        Returns total matching job count, or None if not found.
-        """
-        # Try innerText first (rendered text); fall back to HTML
+    def _fetch_search_page_http(self, url: str) -> str | None:
+        """検索結果ページを HTTP で取得（WellMe の _fetch と同系）。"""
         try:
-            text = page.evaluate("() => document.body?.innerText ?? ''")
+            req = Request(url, headers={"User-Agent": HTTP_USER_AGENT})
+            with urlopen(req, timeout=60) as r:
+                return r.read().decode("utf-8")
         except Exception:
-            text = page.content()
+            return None
+
+    def _extract_total_count_from_html(self, html: str) -> int | None:
+        text = BeautifulSoup(html, "lxml").get_text(" ", strip=True)
         m = re.search(r"該当件数\s*(\d+)\s*件", text) or re.search(r"該当件数(\d+)件", text)
         return int(m.group(1)) if m else None
+
+    def _extract_job_links_from_html(self, html: str) -> list[str]:
+        """Extract job detail URLs from /search/ results HTML."""
+        soup = BeautifulSoup(html, "lxml")
+        links: set[str] = set()
+        for a in soup.find_all("a", href=True):
+            href = a.get("href") or ""
+            if href.startswith("/"):
+                href_full = JOB_MEDLEY_BASE_URL + href
+            elif href.startswith("http") and "job-medley.com" in href:
+                href_full = href
+            else:
+                continue
+            href_no_q = href_full.split("?", 1)[0].split("#", 1)[0]
+            m = re.search(r"job-medley\.com/([a-z]+)/(?:hw/)?(\d+)/?$", href_no_q)
+            if m:
+                links.add(href_no_q)
+        return sorted(links)
 
     def _fetch_job_detail_http(self, job_url: str) -> str | None:
         """Fetch job detail HTML via HTTP (faster than Playwright)."""
@@ -203,27 +157,6 @@ class JobMedleyScraper:
                 return r.read().decode("utf-8")
         except Exception:
             return None
-
-    def _extract_job_links_from_list(self, page) -> list[str]:
-        """
-        Extract job detail URLs from /search/ results. Links go to /dr/, /apo/, /hh/, etc.
-        """
-        anchors = page.locator("a[href]").element_handles()
-        links: set[str] = set()
-        for a in anchors:
-            href = a.get_attribute("href") or ""
-            if href.startswith("/"):
-                href_full = JOB_MEDLEY_BASE_URL + href
-            elif href.startswith("http") and "job-medley.com" in href:
-                href_full = href
-            else:
-                continue
-            href_no_q = href_full.split("?", 1)[0].split("#", 1)[0]
-            # job-medley.com/{category}/{id}/ or /{category}/hw/{id}/
-            m = re.search(r"job-medley\.com/([a-z]+)/(?:hw/)?(\d+)/?$", href_no_q)
-            if m:
-                links.add(href_no_q)
-        return sorted(links)
 
     def _parse_job_detail(
         self, html: str, job_url: str, search_prefecture: str, search_city: str
@@ -376,44 +309,47 @@ class JobMedleyScraper:
         so the caller can persist results immediately and avoid data loss.
         Uses 該当件数 and 全ページ from the search page to determine how many pages to fetch.
         """
+        print("[job-medley] 検索一覧は HTTP で取得します（Playwright 不使用）", flush=True)
         total_pages: int | None = None
         total_count: int | None = None
         max_page = 9999  # fallback when 該当件数 unavailable; break when no links
         page_no = 1
         consecutive_failures = 0
         max_consecutive_failures = 5
-        # 1ページ目で該当件数が取れないまま失敗し続ける場合の深追い防止
         max_pages_if_total_unknown = 80
 
         while page_no <= max_page:
-            page_jobs: list[dict[str, Any]] = []
-            page = self._new_page()
-            url = self._build_search_url(prefecture_id, city_id, page_no)
-            try:
-                self._goto(page, url)
+            if page_no > 1 and self.throttle_sleep_s > 0:
                 time.sleep(self.throttle_sleep_s)
 
+            url = self._build_search_url(prefecture_id, city_id, page_no)
+            page_jobs: list[dict[str, Any]] = []
+            try:
+                html = self._fetch_search_page_http(url)
+                if not html:
+                    consecutive_failures += 1
+                    print(
+                        f"  [エラー] 検索ページ {page_no}: HTML 取得失敗（スキップ）",
+                        flush=True,
+                    )
+                    if page_no == 1 or consecutive_failures >= max_consecutive_failures:
+                        break
+                    page_no += 1
+                    continue
+
                 if page_no == 1:
-                    # Wait for 該当件数 to appear (may load after DOM)
-                    try:
-                        page.wait_for_function(
-                            "document.body?.innerText?.includes('該当件数')",
-                            timeout=5000,
-                        )
-                    except Exception:
-                        pass
-                    total_count = self._extract_total_count_from_search_page(page)
+                    total_count = self._extract_total_count_from_html(html)
                     if total_count is not None:
                         print(f"  該当件数: {total_count}件", flush=True)
 
-                job_links = self._extract_job_links_from_list(page)
+                job_links = self._extract_job_links_from_html(html)
                 if not job_links:
                     print(f"  検索ページ {page_no}: 求人なし（終了）", flush=True)
                     break
 
                 if page_no == 1 and total_count is not None and job_links:
                     total_pages = (total_count + len(job_links) - 1) // len(job_links)
-                    max_page = total_pages  # use actual total (no cap)
+                    max_page = total_pages
                     print(f"  全{total_pages}ページ", flush=True)
                     print(f"  検索ページ {page_no}/{total_pages}: {url}", flush=True)
                 else:
@@ -425,10 +361,10 @@ class JobMedleyScraper:
                 def fetch_one(args: tuple[int, str]) -> tuple[int, dict[str, Any] | None]:
                     idx, job_url = args
                     try:
-                        html = self._fetch_job_detail_http(job_url)
-                        if not html:
+                        html_d = self._fetch_job_detail_http(job_url)
+                        if not html_d:
                             return idx, None
-                        job = self._parse_job_detail(html, job_url, prefecture, city)
+                        job = self._parse_job_detail(html_d, job_url, prefecture, city)
                         return idx, job.__dict__
                     except Exception:
                         return idx, None
@@ -472,7 +408,4 @@ class JobMedleyScraper:
                         flush=True,
                     )
                     break
-            finally:
-                page.close()
             page_no += 1
-

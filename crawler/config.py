@@ -9,14 +9,13 @@ SCRAPING_USER_AGENT = (
 
 
 class Settings:
-    # Playwright（ジョブメドレー検索の深いページや混雑時に 45s では足りないことがある）
+    # 互換用（旧 Playwright 設定）。現行 job_medley は HTTP のみ。
     headless: bool = True
     navigation_timeout_ms: int = 120_000
     request_timeout_ms: int = 60_000
-    # goto 第1段で使う。第2段で domcontentloaded を別途待つ（job_medley._goto）
     wait_until: str = "commit"
 
-    # Rate limiting: Playwright用 / 並列数
+    # ジョブメドレー検索ページ間の待ち秒（0 で無効）
     throttle_sleep_s: float = 0.3
     job_detail_concurrency: int = 5  # 求人詳細の並列取得数
 
