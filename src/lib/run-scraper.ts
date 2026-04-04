@@ -1,5 +1,5 @@
 import { existsSync } from "fs";
-import { spawn } from "child_process";
+import { spawn, type ChildProcessWithoutNullStreams } from "child_process";
 import path from "path";
 
 export type RunScraperOptions = {
@@ -15,28 +15,13 @@ export type RunScraperResult = {
   durationMs: number;
 };
 
-/**
- * Python スクレイパーのルートディレクトリ（リポジトリ直下の `crawler/`）。
- * 上書きしたい場合のみ SCRAPER_ROOT を設定。
- */
-export function getCrawlerRoot(): string {
-  if (process.env.SCRAPER_ROOT) {
-    return path.resolve(process.env.SCRAPER_ROOT);
-  }
-  return path.resolve(process.cwd(), "crawler");
-}
+type ScraperSpawnConfig = {
+  root: string;
+  python: string;
+  args: string[];
+};
 
-export function isCrawlerBundlePresent(): boolean {
-  const root = getCrawlerRoot();
-  return existsSync(path.join(root, "main.py"));
-}
-
-/**
- * `crawler/` で `python main.py` を実行する。
- */
-export async function runScraper(
-  opts: RunScraperOptions = {}
-): Promise<RunScraperResult> {
+function getScraperSpawnConfig(): ScraperSpawnConfig {
   const root = getCrawlerRoot();
   if (!existsSync(path.join(root, "main.py"))) {
     throw new Error(
@@ -58,25 +43,49 @@ export async function runScraper(
     "--output-dir",
     outputDirRel,
   ];
+
+  return { root, python, args };
+}
+
+function pushMaxAreas(args: string[], opts: RunScraperOptions) {
   if (opts.maxAreas != null && opts.maxAreas > 0) {
     args.push("--max-areas", String(opts.maxAreas));
   }
+}
 
+/**
+ * Python スクレイパーを起動する設定を返す（stdout/stderr は呼び出し側で購読）。
+ */
+export function createScraperProcess(
+  opts: RunScraperOptions = {}
+): ChildProcessWithoutNullStreams {
+  const { root, python, args: baseArgs } = getScraperSpawnConfig();
+  const args = [...baseArgs];
+  pushMaxAreas(args, opts);
+
+  return spawn(python, args, {
+    cwd: root,
+    env: { ...process.env },
+    shell: false,
+  }) as ChildProcessWithoutNullStreams;
+}
+
+/**
+ * `crawler/` で `python main.py` を実行する（完了まで stdout/stderr を蓄積）。
+ */
+export async function runScraper(
+  opts: RunScraperOptions = {}
+): Promise<RunScraperResult> {
   const start = Date.now();
+  const child = createScraperProcess(opts);
+  let stdout = "";
+  let stderr = "";
 
   return new Promise((resolve, reject) => {
-    const child = spawn(python, args, {
-      cwd: root,
-      env: { ...process.env },
-      shell: false,
-    });
-
-    let stdout = "";
-    let stderr = "";
-    child.stdout?.on("data", (d: Buffer) => {
+    child.stdout.on("data", (d: Buffer) => {
       stdout += d.toString();
     });
-    child.stderr?.on("data", (d: Buffer) => {
+    child.stderr.on("data", (d: Buffer) => {
       stderr += d.toString();
     });
     child.on("error", (err) => reject(err));
@@ -90,6 +99,58 @@ export async function runScraper(
       });
     });
   });
+}
+
+/**
+ * 実行中に stdout/stderr のチャンクを逐次通知する（リアルタイムログ用）。
+ */
+export async function runScraperWithStream(
+  opts: RunScraperOptions,
+  onChunk: (part: { stream: "stdout" | "stderr"; text: string }) => void
+): Promise<RunScraperResult> {
+  const start = Date.now();
+  const child = createScraperProcess(opts);
+  let stdout = "";
+  let stderr = "";
+
+  return new Promise((resolve, reject) => {
+    child.stdout.on("data", (d: Buffer) => {
+      const t = d.toString();
+      stdout += t;
+      onChunk({ stream: "stdout", text: t });
+    });
+    child.stderr.on("data", (d: Buffer) => {
+      const t = d.toString();
+      stderr += t;
+      onChunk({ stream: "stderr", text: t });
+    });
+    child.on("error", (err) => reject(err));
+    child.on("close", (code, signal) => {
+      resolve({
+        exitCode: code,
+        signal,
+        stdout,
+        stderr,
+        durationMs: Date.now() - start,
+      });
+    });
+  });
+}
+
+/**
+ * Python スクレイパーのルートディレクトリ（リポジトリ直下の `crawler/`）。
+ * 上書きしたい場合のみ SCRAPER_ROOT を設定。
+ */
+export function getCrawlerRoot(): string {
+  if (process.env.SCRAPER_ROOT) {
+    return path.resolve(process.env.SCRAPER_ROOT);
+  }
+  return path.resolve(process.cwd(), "crawler");
+}
+
+export function isCrawlerBundlePresent(): boolean {
+  const root = getCrawlerRoot();
+  return existsSync(path.join(root, "main.py"));
 }
 
 /** スクレイプ出力 CSV の絶対パス（取り込み用） */

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 import time
+import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from typing import Any
@@ -131,6 +132,20 @@ class JobMedleyScraper:
             user_agent=SCRAPING_USER_AGENT,
             locale="ja-JP",
         )
+        # 画像・フォント等を止めて DOMContentLoaded までの待ちを短縮（一覧は HTML のみで十分）
+        def _route_block_heavy(route) -> None:
+            try:
+                if route.request.resource_type in ("image", "media", "font"):
+                    route.abort()
+                else:
+                    route.continue_()
+            except Exception:
+                try:
+                    route.continue_()
+                except Exception:
+                    pass
+
+        self._context.route("**/*", _route_block_heavy)
         return self
 
     def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
@@ -145,12 +160,24 @@ class JobMedleyScraper:
 
     @retry(
         retry=retry_if_exception_type((Exception,)),
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(min=1, max=10),
+        stop=stop_after_attempt(5),
+        wait=wait_exponential(min=2, max=30),
         reraise=True,
     )
     def _goto(self, page, url: str) -> None:
-        page.goto(url, timeout=self.navigation_timeout_ms, wait_until=self.wait_until)
+        """
+        1) commit でナビゲーション確定（重いリソースは route でブロック済み）
+        2) domcontentloaded を別タイムアウトで待つ
+        commit だけだと未描画のことがあるため。goto を domcontentloaded 一発にすると遅いページで 45s 超えしやすい。
+        第1段・第2段でタイムアウトを半分ずつ割り、合計が navigation_timeout_ms を超えないようにする。
+        """
+        half = max(30_000, self.navigation_timeout_ms // 2)
+        page.goto(url, timeout=half, wait_until=self.wait_until)
+        try:
+            page.wait_for_load_state("domcontentloaded", timeout=half)
+        except Exception:
+            # 最低限 body があればリンク抽出を試す
+            page.wait_for_selector("body", state="attached", timeout=15_000)
 
     def _build_search_url(self, prefecture_id: int, city_id: int, page_no: int) -> str:
         return f"{JOB_MEDLEY_BASE_URL}/search/?prefecture_id={prefecture_id}&city_id={city_id}&page={page_no}"
@@ -353,12 +380,16 @@ class JobMedleyScraper:
         total_count: int | None = None
         max_page = 9999  # fallback when 該当件数 unavailable; break when no links
         page_no = 1
+        consecutive_failures = 0
+        max_consecutive_failures = 5
+        # 1ページ目で該当件数が取れないまま失敗し続ける場合の深追い防止
+        max_pages_if_total_unknown = 80
 
         while page_no <= max_page:
             page_jobs: list[dict[str, Any]] = []
             page = self._new_page()
+            url = self._build_search_url(prefecture_id, city_id, page_no)
             try:
-                url = self._build_search_url(prefecture_id, city_id, page_no)
                 self._goto(page, url)
                 time.sleep(self.throttle_sleep_s)
 
@@ -392,18 +423,24 @@ class JobMedleyScraper:
                 print(f"    → 求人リンク {len(job_links)}件取得", flush=True)
 
                 def fetch_one(args: tuple[int, str]) -> tuple[int, dict[str, Any] | None]:
-                    idx, url = args
-                    html = self._fetch_job_detail_http(url)
-                    if not html:
+                    idx, job_url = args
+                    try:
+                        html = self._fetch_job_detail_http(job_url)
+                        if not html:
+                            return idx, None
+                        job = self._parse_job_detail(html, job_url, prefecture, city)
+                        return idx, job.__dict__
+                    except Exception:
                         return idx, None
-                    job = self._parse_job_detail(html, url, prefecture, city)
-                    return idx, job.__dict__
 
                 results: list[dict[str, Any] | None] = [None] * len(job_links)
                 with ThreadPoolExecutor(max_workers=self.job_detail_concurrency) as ex:
-                    futures = {ex.submit(fetch_one, (i, url)): i for i, url in enumerate(job_links)}
+                    futures = {ex.submit(fetch_one, (i, u)): i for i, u in enumerate(job_links)}
                     for future in as_completed(futures):
-                        idx, job_dict = future.result()
+                        try:
+                            idx, job_dict = future.result()
+                        except Exception:
+                            continue
                         results[idx] = job_dict
                         if job_dict:
                             name = (job_dict.get("facility_name") or "")[:25]
@@ -413,7 +450,28 @@ class JobMedleyScraper:
                             print(f"      [{idx + 1}/{len(job_links)}] {name} | {jt}", flush=True)
 
                 page_jobs = [r for r in results if r is not None]
+                consecutive_failures = 0
                 yield page_no, page_jobs
+            except Exception as e:
+                consecutive_failures += 1
+                err_msg = str(e).strip() or type(e).__name__
+                print(
+                    f"  [エラー] 検索ページ {page_no} をスキップ: {err_msg}",
+                    flush=True,
+                )
+                traceback.print_exc()
+                if total_pages is None and page_no == 1:
+                    max_page = min(max_page, max_pages_if_total_unknown)
+                    print(
+                        f"  [注意] 該当件数が未取得のため、この地域は最大 {max_pages_if_total_unknown} ページまでに制限します。",
+                        flush=True,
+                    )
+                if consecutive_failures >= max_consecutive_failures:
+                    print(
+                        f"  [エラー] 同一地域で連続 {max_consecutive_failures} 回失敗したため、この地域の取得を打ち切ります。",
+                        flush=True,
+                    )
+                    break
             finally:
                 page.close()
             page_no += 1

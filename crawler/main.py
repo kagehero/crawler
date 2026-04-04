@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import re
 import sys
+import traceback
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
@@ -105,6 +106,12 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--output", default="data/output.csv")
     parser.add_argument("--output-dir", default="data/pages", help="Directory for per-page CSV files")
     parser.add_argument("--max-areas", type=int, default=None)
+    parser.add_argument(
+        "--area-indices",
+        type=str,
+        default=None,
+        help="comma-separated 0-based row indices after load (e.g. 0,2,5). If set, --max-areas is ignored.",
+    )
     parser.add_argument("--excel", action="store_true", help="Use Excel input (resolve city_id via API)")
     args = parser.parse_args(argv)
 
@@ -117,7 +124,16 @@ def main(argv: list[str]) -> int:
     else:
         areas = load_areas_from_site_url_file(str(input_path))
 
-    if args.max_areas is not None:
+    if args.area_indices:
+        idxs: list[int] = []
+        for part in args.area_indices.split(","):
+            part = part.strip()
+            if not part:
+                continue
+            idxs.append(int(part))
+        idxs = sorted(set(idxs))
+        areas = [areas[i] for i in idxs if 0 <= i < len(areas)]
+    elif args.max_areas is not None:
         areas = areas[: args.max_areas]
 
     output_dir = Path(args.output_dir)
@@ -141,42 +157,58 @@ def main(argv: list[str]) -> int:
         )
         with scraper:
             for i, (pref, city, url) in enumerate(job_medley_areas, 1):
-                m = re.search(r"prefecture_id=(\d+)", url)
-                m2 = re.search(r"city_id=(\d+)", url)
-                if not (m and m2):
+                try:
+                    m = re.search(r"prefecture_id=(\d+)", url)
+                    m2 = re.search(r"city_id=(\d+)", url)
+                    if not (m and m2):
+                        continue
+                    pref_id, city_id = int(m.group(1)), int(m2.group(1))
+                    print(f"\n[{i}/{len(job_medley_areas)}] [job-medley] 地域: {pref} / {city}", flush=True)
+                    area_label = _safe_filename(f"{pref}_{city}")
+                    area_count = 0
+                    for page_no, page_jobs in scraper.scrape_area(
+                        prefecture_id=pref_id,
+                        city_id=city_id,
+                        prefecture=pref,
+                        city=city,
+                    ):
+                        for j in page_jobs:
+                            j["acquisition_date"] = acquisition_date
+                        page_path = output_dir / f"{i:03d}_{area_label}_page_{page_no:03d}.csv"
+                        export_jobs_to_csv(page_jobs, str(page_path), encoding=settings.csv_encoding)
+                        print(f"    → 保存: {page_path} ({len(page_jobs)}件)", flush=True)
+                        all_jobs.extend(page_jobs)
+                        area_count += len(page_jobs)
+                    print(f"  → 地域合計: {area_count}件", flush=True)
+                except Exception as e:
+                    print(
+                        f"\n[エラー] [job-medley] 地域 {pref} / {city} で未処理例外のためスキップ: {e}",
+                        flush=True,
+                    )
+                    traceback.print_exc()
                     continue
-                pref_id, city_id = int(m.group(1)), int(m2.group(1))
-                print(f"\n[{i}/{len(job_medley_areas)}] [job-medley] 地域: {pref} / {city}", flush=True)
-                area_label = _safe_filename(f"{pref}_{city}")
-                area_count = 0
-                for page_no, page_jobs in scraper.scrape_area(
-                    prefecture_id=pref_id,
-                    city_id=city_id,
-                    prefecture=pref,
-                    city=city,
-                ):
-                    for j in page_jobs:
-                        j["acquisition_date"] = acquisition_date
-                    page_path = output_dir / f"{i:03d}_{area_label}_page_{page_no:03d}.csv"
-                    export_jobs_to_csv(page_jobs, str(page_path), encoding=settings.csv_encoding)
-                    print(f"    → 保存: {page_path} ({len(page_jobs)}件)", flush=True)
-                    all_jobs.extend(page_jobs)
-                    area_count += len(page_jobs)
-                print(f"  → 地域合計: {area_count}件", flush=True)
 
     for i, (pref, city, url) in enumerate(wellme_areas, len(job_medley_areas) + 1):
-        print(f"\n[{i}/{len(areas)}] [WellMe Job] 地域: {pref} / {city}", flush=True)
-        area_label = _safe_filename(f"{pref}_{city}")
-        area_count = 0
-        for page_no, page_jobs in scrape_wellme_area(url, pref, city):
-            for j in page_jobs:
-                j["acquisition_date"] = acquisition_date
-            page_path = output_dir / f"{i:03d}_{area_label}_page_{page_no:03d}.csv"
-            export_jobs_to_csv(page_jobs, str(page_path), encoding=settings.csv_encoding)
-            print(f"    → 保存: {page_path} ({len(page_jobs)}件)", flush=True)
-            all_jobs.extend(page_jobs)
-            area_count += len(page_jobs)
-        print(f"  → 地域合計: {area_count}件", flush=True)
+        try:
+            print(f"\n[{i}/{len(areas)}] [WellMe Job] 地域: {pref} / {city}", flush=True)
+            area_label = _safe_filename(f"{pref}_{city}")
+            area_count = 0
+            for page_no, page_jobs in scrape_wellme_area(url, pref, city):
+                for j in page_jobs:
+                    j["acquisition_date"] = acquisition_date
+                page_path = output_dir / f"{i:03d}_{area_label}_page_{page_no:03d}.csv"
+                export_jobs_to_csv(page_jobs, str(page_path), encoding=settings.csv_encoding)
+                print(f"    → 保存: {page_path} ({len(page_jobs)}件)", flush=True)
+                all_jobs.extend(page_jobs)
+                area_count += len(page_jobs)
+            print(f"  → 地域合計: {area_count}件", flush=True)
+        except Exception as e:
+            print(
+                f"\n[エラー] [WellMe] 地域 {pref} / {city} で未処理例外のためスキップ: {e}",
+                flush=True,
+            )
+            traceback.print_exc()
+            continue
 
     before_dedup = len(all_jobs)
     all_jobs = deduplicate_jobs(all_jobs, dedup_key=settings.dedup_key)
