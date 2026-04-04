@@ -1,5 +1,10 @@
 /** 求人 API / CSV エクスポート共通のクエリ・Mongo フィルタ */
 
+import {
+  employmentToCanonical,
+  expandEmploymentForQuery,
+} from "@/lib/employment-normalization";
+
 const SOURCES = ["job_medley", "wellme", "unknown"] as const;
 export type JobSource = (typeof SOURCES)[number];
 
@@ -83,7 +88,9 @@ export function parseJobsSearchParams(
   const citiesRaw = uniqueStrings(sp.getAll("city"));
   const cities = citiesRaw.length ? citiesRaw : undefined;
   const employmentsRaw = uniqueStrings(sp.getAll("employment"));
-  const employments = employmentsRaw.length ? employmentsRaw : undefined;
+  const employments = employmentsRaw.length
+    ? uniqueStrings(employmentsRaw.map(employmentToCanonical))
+    : undefined;
   const jobCategoriesRaw = uniqueStrings(sp.getAll("jobCategory"));
   const jobCategories = jobCategoriesRaw.length ? jobCategoriesRaw : undefined;
   const serviceTypesRaw = uniqueStrings(sp.getAll("serviceType"));
@@ -163,19 +170,11 @@ export function buildJobsMongoFilter(p: ParsedJobsQuery): Record<string, unknown
     }
   }
   if (p.employments && p.employments.length > 0) {
-    if (p.employments.length === 1) {
-      parts.push({
-        employment_type: {
-          $regex: escapeRegex(p.employments[0]!),
-          $options: "i",
-        },
-      });
+    const expanded = expandEmploymentForQuery(p.employments);
+    if (expanded.length === 1) {
+      parts.push({ employment_type: expanded[0] });
     } else {
-      parts.push({
-        $or: p.employments.map((e) => ({
-          employment_type: { $regex: escapeRegex(e), $options: "i" },
-        })),
-      });
+      parts.push({ employment_type: { $in: expanded } });
     }
   }
   if (p.jobCategories && p.jobCategories.length > 0) {

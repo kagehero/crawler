@@ -2,6 +2,7 @@ import type { Collection, Document } from "mongodb";
 import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@/lib/mongodb";
 import { verifyBrowserAuth } from "@/lib/auth";
+import { canonicalEmploymentOptions } from "@/lib/employment-normalization";
 import {
   TARGET_REGIONS,
   targetPrefectureLabels,
@@ -40,7 +41,7 @@ export async function GET(request: NextRequest) {
   const db = await getDb();
   const col = db.collection("jobs");
 
-  const [employmentTypes, jobCategoriesBySource, serviceTypesBySource] =
+  const [employmentRaw, jobCategoriesBySource, serviceTypesBySource] =
     await Promise.all([
       col.distinct("employment_type", {
         employment_type: { $nin: [null, ""] },
@@ -52,7 +53,10 @@ export async function GET(request: NextRequest) {
   return NextResponse.json({
     prefectures: targetPrefectureLabels(),
     sources: sortJa((await col.distinct("source")).map(String)),
-    employmentTypes: sortJa(employmentTypes.map(String)).slice(0, 80),
+    employmentTypes: canonicalEmploymentOptions(employmentRaw.map(String)).slice(
+      0,
+      80
+    ),
     jobCategoriesBySource,
     serviceTypesBySource,
     targetRegions: TARGET_REGIONS,

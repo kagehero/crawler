@@ -37,8 +37,10 @@ def parse_salary_min_max(text: str) -> tuple[Optional[int], Optional[int]]:
     Examples:
       - "月給 250,000円〜300,000円" -> (250000, 300000)
       - "時給 1,200円〜1,500円"   -> (1200, 1500)
+      - "日給 33,000円〜40,000円" -> (33000, 40000)
       - "月給171,500円"         -> (171500, 0)
       - "月給 238,500円〜"      -> (238500, 0)
+      - "日給 33,000円〜"       -> (33000, 0)
     """
     if not text:
         return None, None
@@ -60,12 +62,20 @@ def parse_salary_min_max(text: str) -> tuple[Optional[int], Optional[int]]:
     if m:
         return _to_int_money(m.group(1)), _to_int_money(m.group(2))
 
+    m = re.search(r"日給\s*([0-9][0-9,]*)\s*円\s*~\s*([0-9][0-9,]*)\s*円", normalized)
+    if m:
+        return _to_int_money(m.group(1)), _to_int_money(m.group(2))
+
     # 2) Single: 〇円 or 〇円～ (①②とも min=value, max=0)
     m = re.search(r"月給\s*([0-9][0-9,]*)\s*円", normalized)
     if m:
         return _to_int_money(m.group(1)), 0
 
     m = re.search(r"時給\s*([0-9][0-9,]*)\s*円", normalized)
+    if m:
+        return _to_int_money(m.group(1)), 0
+
+    m = re.search(r"日給\s*([0-9][0-9,]*)\s*円", normalized)
     if m:
         return _to_int_money(m.group(1)), 0
 

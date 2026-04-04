@@ -5,6 +5,7 @@
 ```bash
 cd crawler
 pip install -r requirements.txt
-playwright install chromium
 python main.py --help
 ```
+
+ジョブメドレー検索一覧は HTTP で取得します（Chromium / Playwright は不要）。

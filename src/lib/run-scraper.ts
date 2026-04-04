@@ -3,8 +3,12 @@ import { spawn, type ChildProcessWithoutNullStreams } from "child_process";
 import path from "path";
 
 export type RunScraperOptions = {
-  /** テスト用: 先頭 N 地域のみ */
+  /** テスト用: 先頭 N 地域のみ（areaIndices 指定時は無視） */
   maxAreas?: number;
+  /** crawler/ からの相対パス（例: site_url_jobmedley_raks）。未指定時は SCRAPER_INPUT または既定 */
+  inputFile?: string;
+  /** 入力 TSV の 0 始まり行番号。指定時は maxAreas は付与しない */
+  areaIndices?: number[];
 };
 
 export type RunScraperResult = {
@@ -21,7 +25,9 @@ type ScraperSpawnConfig = {
   args: string[];
 };
 
-function getScraperSpawnConfig(): ScraperSpawnConfig {
+function getScraperSpawnConfig(
+  opts: RunScraperOptions = {}
+): ScraperSpawnConfig {
   const root = getCrawlerRoot();
   if (!existsSync(path.join(root, "main.py"))) {
     throw new Error(
@@ -30,7 +36,10 @@ function getScraperSpawnConfig(): ScraperSpawnConfig {
   }
 
   const python = process.env.SCRAPER_PYTHON || "python3";
-  const inputRel = process.env.SCRAPER_INPUT || "site_url_jobmedley_raks";
+  const inputRel =
+    opts.inputFile?.trim() ||
+    process.env.SCRAPER_INPUT ||
+    "site_url_jobmedley_raks";
   const outputRel = process.env.SCRAPER_OUTPUT || "data/output.csv";
   const outputDirRel = process.env.SCRAPER_OUTPUT_DIR || "data/pages";
 
@@ -47,7 +56,19 @@ function getScraperSpawnConfig(): ScraperSpawnConfig {
   return { root, python, args };
 }
 
+function pushAreaIndices(args: string[], opts: RunScraperOptions) {
+  if (opts.areaIndices != null && opts.areaIndices.length > 0) {
+    const sorted = [...new Set(opts.areaIndices)]
+      .filter((n) => Number.isInteger(n) && n >= 0)
+      .sort((a, b) => a - b);
+    if (sorted.length > 0) {
+      args.push("--area-indices", sorted.join(","));
+    }
+  }
+}
+
 function pushMaxAreas(args: string[], opts: RunScraperOptions) {
+  if (opts.areaIndices != null && opts.areaIndices.length > 0) return;
   if (opts.maxAreas != null && opts.maxAreas > 0) {
     args.push("--max-areas", String(opts.maxAreas));
   }
@@ -59,8 +80,9 @@ function pushMaxAreas(args: string[], opts: RunScraperOptions) {
 export function createScraperProcess(
   opts: RunScraperOptions = {}
 ): ChildProcessWithoutNullStreams {
-  const { root, python, args: baseArgs } = getScraperSpawnConfig();
+  const { root, python, args: baseArgs } = getScraperSpawnConfig(opts);
   const args = [...baseArgs];
+  pushAreaIndices(args, opts);
   pushMaxAreas(args, opts);
 
   return spawn(python, args, {

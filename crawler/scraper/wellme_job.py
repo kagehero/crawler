@@ -40,6 +40,41 @@ def _add_page_to_url(url: str, page: int) -> str:
     return urlunparse(parsed._replace(query=new_query))
 
 
+def _parse_salary_from_p_salary_block(soup: BeautifulSoup) -> tuple[int | None, int | None, str]:
+    """
+    kaigojob.com の構造化給与ブロック div.p-salary から取得する。
+    .p-salary__header に 月給/時給/日給/年収、.p-salary__number に金額（1〜2個）。
+
+    Returns:
+        (min, max, payment_method). ブロックなしは (None, None, "")。
+        金額1件のみのとき max は 0。支給区分が取れなければ payment_method は ""。
+    """
+    block = soup.select_one("div.p-salary")
+    if not block:
+        return None, None, ""
+
+    payment_method = ""
+    header_el = block.select_one(".p-salary__header")
+    if header_el:
+        raw = header_el.get_text(strip=True)
+        for kw in ("月給", "時給", "日給", "年収"):
+            if kw in raw:
+                payment_method = kw
+                break
+
+    nums: list[int] = []
+    for el in block.select(".p-salary__number"):
+        s = el.get_text(strip=True).replace(",", "")
+        if s.isdigit():
+            nums.append(int(s))
+
+    if len(nums) >= 2:
+        return nums[0], nums[1], payment_method
+    if len(nums) == 1:
+        return nums[0], 0, payment_method
+    return None, None, payment_method
+
+
 def _extract_job_links(html: str) -> list[str]:
     """Extract job detail URLs from search results."""
     soup = BeautifulSoup(html, "lxml")
@@ -124,10 +159,18 @@ def _parse_job_detail(html: str, job_url: str, search_prefecture: str, search_ci
     if not employment_type:
         employment_type = "Unknown"
 
-    salary_min, salary_max = parse_salary_min_max(text)
-    salary_min = salary_min or 0
-    salary_max = salary_max or 0
-    payment_method = parse_payment_method(text)
+    sm_block, sx_block, pm_block = _parse_salary_from_p_salary_block(soup)
+    if sm_block is not None:
+        salary_min, salary_max = sm_block, sx_block if sx_block is not None else 0
+    else:
+        salary_min, salary_max = parse_salary_min_max(text)
+        salary_min = salary_min or 0
+        salary_max = salary_max or 0
+
+    if pm_block:
+        payment_method = pm_block
+    else:
+        payment_method = parse_payment_method(text)
 
     service_type = ""
     for tag in soup.find_all(["dt", "th"]):

@@ -149,44 +149,39 @@ def main(argv: list[str]) -> int:
 
     if job_medley_areas:
         scraper = JobMedleyScraper(
-            headless=settings.headless,
-            navigation_timeout_ms=settings.navigation_timeout_ms,
-            request_timeout_ms=settings.request_timeout_ms,
-            wait_until=settings.wait_until,
             throttle_sleep_s=settings.throttle_sleep_s,
         )
-        with scraper:
-            for i, (pref, city, url) in enumerate(job_medley_areas, 1):
-                try:
-                    m = re.search(r"prefecture_id=(\d+)", url)
-                    m2 = re.search(r"city_id=(\d+)", url)
-                    if not (m and m2):
-                        continue
-                    pref_id, city_id = int(m.group(1)), int(m2.group(1))
-                    print(f"\n[{i}/{len(job_medley_areas)}] [job-medley] 地域: {pref} / {city}", flush=True)
-                    area_label = _safe_filename(f"{pref}_{city}")
-                    area_count = 0
-                    for page_no, page_jobs in scraper.scrape_area(
-                        prefecture_id=pref_id,
-                        city_id=city_id,
-                        prefecture=pref,
-                        city=city,
-                    ):
-                        for j in page_jobs:
-                            j["acquisition_date"] = acquisition_date
-                        page_path = output_dir / f"{i:03d}_{area_label}_page_{page_no:03d}.csv"
-                        export_jobs_to_csv(page_jobs, str(page_path), encoding=settings.csv_encoding)
-                        print(f"    → 保存: {page_path} ({len(page_jobs)}件)", flush=True)
-                        all_jobs.extend(page_jobs)
-                        area_count += len(page_jobs)
-                    print(f"  → 地域合計: {area_count}件", flush=True)
-                except Exception as e:
-                    print(
-                        f"\n[エラー] [job-medley] 地域 {pref} / {city} で未処理例外のためスキップ: {e}",
-                        flush=True,
-                    )
-                    traceback.print_exc()
+        for i, (pref, city, url) in enumerate(job_medley_areas, 1):
+            try:
+                m = re.search(r"prefecture_id=(\d+)", url)
+                m2 = re.search(r"city_id=(\d+)", url)
+                if not (m and m2):
                     continue
+                pref_id, city_id = int(m.group(1)), int(m2.group(1))
+                print(f"\n[{i}/{len(job_medley_areas)}] [job-medley] 地域: {pref} / {city}", flush=True)
+                area_label = _safe_filename(f"{pref}_{city}")
+                area_count = 0
+                for page_no, page_jobs in scraper.scrape_area(
+                    prefecture_id=pref_id,
+                    city_id=city_id,
+                    prefecture=pref,
+                    city=city,
+                ):
+                    for j in page_jobs:
+                        j["acquisition_date"] = acquisition_date
+                    page_path = output_dir / f"{i:03d}_{area_label}_page_{page_no:03d}.csv"
+                    export_jobs_to_csv(page_jobs, str(page_path), encoding=settings.csv_encoding)
+                    print(f"    → 保存: {page_path} ({len(page_jobs)}件)", flush=True)
+                    all_jobs.extend(page_jobs)
+                    area_count += len(page_jobs)
+                print(f"  → 地域合計: {area_count}件", flush=True)
+            except Exception as e:
+                print(
+                    f"\n[エラー] [job-medley] 地域 {pref} / {city} で未処理例外のためスキップ: {e}",
+                    flush=True,
+                )
+                traceback.print_exc()
+                continue
 
     for i, (pref, city, url) in enumerate(wellme_areas, len(job_medley_areas) + 1):
         try:
