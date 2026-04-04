@@ -4,11 +4,11 @@ import { verifyAdminOrBearer } from "@/lib/auth";
 import { getDb } from "@/lib/mongodb";
 import { importJobsFromCsvBuffer } from "@/lib/import-csv";
 import {
-  getCrawlerRoot,
   isCrawlerBundlePresent,
   resolveScraperOutputCsvPath,
   runScraper,
 } from "@/lib/run-scraper";
+import { isAllowedScrapeInputFile, SCRAPE_INPUT_FILES } from "@/lib/site-url-areas";
 
 export const runtime = "nodejs";
 /**
@@ -27,6 +27,13 @@ export async function GET(request: NextRequest) {
     configured,
     bundle: "crawler",
     input: process.env.SCRAPER_INPUT ?? "site_url_jobmedley_raks",
+    selectableInputs: SCRAPE_INPUT_FILES.map((id) => ({
+      id,
+      label:
+        id === "site_url_wellme_raks"
+          ? "WellMe（kaigojob.com）"
+          : "Job Medley（job-medley.com）",
+    })),
     output: process.env.SCRAPER_OUTPUT ?? "data/output.csv",
     outputDir: process.env.SCRAPER_OUTPUT_DIR ?? "data/pages",
     python: process.env.SCRAPER_PYTHON ?? "python3",
@@ -35,6 +42,8 @@ export async function GET(request: NextRequest) {
 
 type Body = {
   maxAreas?: number;
+  inputFile?: string;
+  areaIndices?: number[];
   /** true のとき、成功後に出力 CSV を MongoDB に取り込む */
   importAfter?: boolean;
 };
@@ -74,8 +83,29 @@ export async function POST(request: NextRequest) {
       : undefined;
   const importAfter = Boolean(body.importAfter);
 
+  let inputFile: string | undefined;
+  if (body.inputFile != null && String(body.inputFile).trim() !== "") {
+    const f = String(body.inputFile).trim();
+    if (!isAllowedScrapeInputFile(f)) {
+      return NextResponse.json({ error: "inputFile が不正です" }, { status: 400 });
+    }
+    inputFile = f;
+  }
+
+  let areaIndices: number[] | undefined;
+  if (Array.isArray(body.areaIndices) && body.areaIndices.length > 0) {
+    areaIndices = body.areaIndices
+      .map((n) => (typeof n === "number" ? Math.floor(n) : NaN))
+      .filter((n) => Number.isInteger(n) && n >= 0);
+    if (areaIndices.length === 0) areaIndices = undefined;
+  }
+
   try {
-    const result = await runScraper({ maxAreas });
+    const result = await runScraper({
+      maxAreas,
+      inputFile,
+      areaIndices,
+    });
 
     let importResult: Awaited<
       ReturnType<typeof importJobsFromCsvBuffer>

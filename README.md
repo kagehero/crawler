@@ -8,7 +8,7 @@
 
 | パス | 内容 |
 |------|------|
-| `crawler/` | Python（`main.py`、Playwright、`site_url_*`、`input/` の Excel など） |
+| `crawler/` | Python（`main.py`、`site_url_*`、`input/` の Excel など。ジョブメドレー検索は HTTP） |
 | `src/` | Next.js 管理画面（MongoDB・取り込み・Web からスクレイピング） |
 | `src/lib/target-regions.ts` | 取得対象エリア（`crawler/site_url_wellme_raks` と対応）。求人一覧の都道府県候補は **ここを先頭** に並べ、その他は DB のみの県を続ける |
 | `scripts/` | Node 補助（Mongo 接続テストなど） |
@@ -33,7 +33,6 @@ cd crawler
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-playwright install chromium
 ```
 
 ### Job Medley
@@ -78,7 +77,6 @@ npm install && npm run dev
 ```bash
 cd crawler
 pip install -r requirements.txt
-playwright install chromium
 ```
 
 `npm run dev` / `npm start` は **リポジトリルート**で実行してください（`crawler/` の解決に使います）。

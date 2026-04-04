@@ -8,12 +8,15 @@ import {
   resolveScraperOutputCsvPath,
   runScraperWithStream,
 } from "@/lib/run-scraper";
+import { isAllowedScrapeInputFile } from "@/lib/site-url-areas";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
 
 type Body = {
   maxAreas?: number;
+  inputFile?: string;
+  areaIndices?: number[];
   importAfter?: boolean;
 };
 
@@ -78,6 +81,26 @@ export async function POST(request: NextRequest) {
       : undefined;
   const importAfter = Boolean(body.importAfter);
 
+  let inputFile: string | undefined;
+  if (body.inputFile != null && String(body.inputFile).trim() !== "") {
+    const f = String(body.inputFile).trim();
+    if (!isAllowedScrapeInputFile(f)) {
+      return new Response(
+        JSON.stringify({ type: "error", message: "inputFile が不正です" }) + "\n",
+        { status: 400, headers: { "Content-Type": "application/x-ndjson; charset=utf-8" } }
+      );
+    }
+    inputFile = f;
+  }
+
+  let areaIndices: number[] | undefined;
+  if (Array.isArray(body.areaIndices) && body.areaIndices.length > 0) {
+    areaIndices = body.areaIndices
+      .map((n) => (typeof n === "number" ? Math.floor(n) : NaN))
+      .filter((n) => Number.isInteger(n) && n >= 0);
+    if (areaIndices.length === 0) areaIndices = undefined;
+  }
+
   const encoder = new TextEncoder();
 
   const stream = new ReadableStream<Uint8Array>({
@@ -87,7 +110,9 @@ export async function POST(request: NextRequest) {
       };
 
       try {
-        const result = await runScraperWithStream({ maxAreas }, (part) => {
+        const result = await runScraperWithStream(
+          { maxAreas, inputFile, areaIndices },
+          (part) => {
           send({ type: "log", stream: part.stream, text: part.text });
         });
 

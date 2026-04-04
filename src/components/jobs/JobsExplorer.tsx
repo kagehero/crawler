@@ -93,11 +93,6 @@ function uniqueServiceTypeTokens(
   return [...set].sort((a, b) => a.localeCompare(b, "ja"));
 }
 
-/** URL の配列パラメータとフォーム値の比較用 */
-function sortedJoin(values: string[] | undefined): string {
-  return [...(values ?? [])].sort().join("\0");
-}
-
 function citiesForPrefectureList(prefectures: string[]): string[] {
   const set = new Set<string>();
   for (const pr of prefectures) {
@@ -106,11 +101,16 @@ function citiesForPrefectureList(prefectures: string[]): string[] {
   return [...set].sort((a, b) => a.localeCompare(b, "ja"));
 }
 
+/** URL の配列パラメータとフォーム値の比較用 */
+function sortedJoin(values: string[] | undefined): string {
+  return [...(values ?? [])].sort().join("\0");
+}
+
 function parsedFromUrl(sp: URLSearchParams): ParsedJobsQuery {
   return parseJobsSearchParams(sp);
 }
 
-/** 詳細条件の各項目：最小幅を確保しつつ親幅に合わせて折り返す */
+/** 検索条件の各項目：最小幅を確保しつつ親幅に合わせて折り返す */
 const FILTER_FIELD_GRID =
   "grid gap-x-3 gap-y-2 [grid-template-columns:repeat(auto-fill,minmax(13rem,1fr))]";
 
@@ -216,7 +216,7 @@ export function JobsExplorer() {
   const [pages, setPages] = useState(1);
   const [loading, setLoading] = useState(true);
   const [options, setOptions] = useState<FilterOptions | null>(null);
-  /** 詳細フィルタ欄の開閉（キーワード検索は常に表示） */
+  /** 検索条件欄の開閉（キーワードは下段に常時表示） */
   const [filtersOpen, setFiltersOpen] = useState(true);
 
   const exportHref = useMemo(() => {
@@ -306,7 +306,7 @@ export function JobsExplorer() {
     null
   );
 
-  /** 詳細フィルタ（キーワード・件数は URL のまま） */
+  /** 検索条件フィルタ（キーワード・件数は URL のまま） */
   const applyFilterForm = useCallback(
     (form: FormData) => {
       const get = (k: string) => (form.get(k) as string)?.trim() ?? "";
@@ -336,8 +336,6 @@ export function JobsExplorer() {
         .getAll("prefecture")
         .map((s) => String(s).trim())
         .filter(Boolean);
-      const prefectureChanged =
-        sortedJoin(newPrefectures) !== sortedJoin(p.prefectures);
 
       const newSources = form
         .getAll("source")
@@ -345,23 +343,23 @@ export function JobsExplorer() {
         .filter((s): s is SourceKey =>
           s === "job_medley" || s === "wellme" || s === "unknown"
         );
-      const sourceChanged = sortedJoin(newSources) !== sortedJoin(p.sources);
+      const sourceChanged =
+        sortedJoin(newSources) !== sortedJoin(p.sources);
 
-      const allowedCities = prefectureChanged
-        ? []
-        : citiesForPrefectureList(newPrefectures);
+      const allowedCities = citiesForPrefectureList(newPrefectures);
       const newCitiesRaw = form
         .getAll("city")
         .map((s) => String(s).trim())
         .filter(Boolean);
-      const newCitiesFiltered = prefectureChanged
-        ? []
-        : newCitiesRaw.filter((c) => allowedCities.includes(c));
+      const newCitiesFiltered = newCitiesRaw.filter((c) =>
+        allowedCities.includes(c)
+      );
 
       const newEmployments = form
         .getAll("employment")
         .map((s) => String(s).trim())
         .filter(Boolean);
+
       const newJobCategories = sourceChanged
         ? []
         : form
@@ -427,6 +425,14 @@ export function JobsExplorer() {
   const handleFilterFormChange = useCallback(
     (e: React.FormEvent<HTMLFormElement>) => {
       const t = e.target as HTMLElement;
+      if (t instanceof HTMLInputElement) {
+        if (
+          t.type === "number" &&
+          (t.name === "salaryGte" || t.name === "salaryLte")
+        ) {
+          return;
+        }
+      }
       if (t instanceof HTMLSelectElement) {
         scheduleFilterApply(true);
         return;
@@ -481,8 +487,7 @@ export function JobsExplorer() {
           求人一覧
         </h1>
         <p className="max-w-3xl text-[11px] leading-snug text-sumi/75">
-          キーワード・詳細条件を変えると一覧が自動で更新されます。都道府県・媒体・職種などは複数チェックすると、そのいずれかに一致する求人が表示されます。サービス種別は、求人のサービス表示に選択した語が含まれるものに絞り込みます。CSV
-          は結果の上にあるリンクから、現在の条件でダウンロードできます。
+          検索条件選択・フリーワード入力をすると、それに沿った検索結果に自動更新されます。検索結果一覧は【CSVをダウンロード】ボタンよりダウンロードが可能です。
         </p>
       </header>
 
@@ -490,43 +495,6 @@ export function JobsExplorer() {
         className="flex flex-col rounded-2xl border border-wash bg-white shadow-card"
         aria-label="検索・絞り込み"
       >
-        <section
-          className="shrink-0 border-b border-wash/80 bg-white px-3 py-2 sm:px-4"
-          aria-labelledby="jobs-keyword-heading"
-        >
-          <h2
-            id="jobs-keyword-heading"
-            className="text-[11px] font-semibold uppercase tracking-wide text-sumi/80"
-          >
-            キーワード
-          </h2>
-          <form
-            ref={keywordFormRef}
-            key={`kw-${searchParams.toString()}`}
-            className="mt-1.5"
-            onSubmit={(e) => {
-              e.preventDefault();
-              if (keywordApplyTimerRef.current) {
-                clearTimeout(keywordApplyTimerRef.current);
-                keywordApplyTimerRef.current = null;
-              }
-              applyKeywordFromForm();
-            }}
-          >
-            <label className="block min-w-0">
-              <span className="sr-only">キーワード</span>
-              <input
-                name="q"
-                defaultValue={parsed.q ?? ""}
-                placeholder="施設名・職種・市区町村など（入力後しばらくで反映）"
-                autoComplete="off"
-                onChange={scheduleKeywordApply}
-                className="w-full rounded-lg border border-wash bg-paper/50 px-2.5 py-1.5 text-xs text-ink shadow-sm outline-none ring-ai/15 focus:ring-2"
-              />
-            </label>
-          </form>
-        </section>
-
         <div
           className={
             filtersOpen ? "flex flex-col bg-paper/25" : "shrink-0 bg-paper/25"
@@ -539,7 +507,7 @@ export function JobsExplorer() {
             aria-expanded={filtersOpen}
             id="jobs-filters-toggle"
           >
-            <span>詳細条件</span>
+            <span>検索条件</span>
             <span className="font-normal text-sumi/60">
               {filtersOpen ? "閉じる" : "開く"}
             </span>
@@ -947,6 +915,7 @@ export function JobsExplorer() {
                         }
                         placeholder="例：300"
                         title="salary_max がこの値以上の求人"
+                        onBlur={() => scheduleFilterApply(true)}
                         className="w-full min-w-0 rounded-lg border border-wash bg-white px-2 py-1.5 text-xs text-ink shadow-sm outline-none ring-ai/15 focus:ring-2"
                       />
                     </label>
@@ -966,6 +935,7 @@ export function JobsExplorer() {
                         }
                         placeholder="例：500"
                         title="salary_min がこの値以下の求人"
+                        onBlur={() => scheduleFilterApply(true)}
                         className="w-full min-w-0 rounded-lg border border-wash bg-white px-2 py-1.5 text-xs text-ink shadow-sm outline-none ring-ai/15 focus:ring-2"
                       />
                     </label>
@@ -999,6 +969,43 @@ export function JobsExplorer() {
             </form>
           )}
         </div>
+
+        <section
+          className="shrink-0 border-t border-wash/80 bg-white px-3 py-2 sm:px-4"
+          aria-labelledby="jobs-keyword-heading"
+        >
+          <h2
+            id="jobs-keyword-heading"
+            className="text-[11px] font-semibold uppercase tracking-wide text-sumi/80"
+          >
+            キーワード
+          </h2>
+          <form
+            ref={keywordFormRef}
+            key={`kw-${searchParams.toString()}`}
+            className="mt-1.5"
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (keywordApplyTimerRef.current) {
+                clearTimeout(keywordApplyTimerRef.current);
+                keywordApplyTimerRef.current = null;
+              }
+              applyKeywordFromForm();
+            }}
+          >
+            <label className="block min-w-0">
+              <span className="sr-only">キーワード</span>
+              <input
+                name="q"
+                defaultValue={parsed.q ?? ""}
+                placeholder="施設名・職種・市区町村など（入力後しばらくで反映）"
+                autoComplete="off"
+                onChange={scheduleKeywordApply}
+                className="w-full rounded-lg border border-wash bg-paper/50 px-2.5 py-1.5 text-xs text-ink shadow-sm outline-none ring-ai/15 focus:ring-2"
+              />
+            </label>
+          </form>
+        </section>
       </div>
 
       <div className="flex flex-wrap items-center justify-between gap-3 text-sm">
@@ -1010,7 +1017,7 @@ export function JobsExplorer() {
         </p>
         <a
           href={exportHref}
-          title="最大5万件まで。現在のキーワード・詳細条件を反映します。"
+          title="最大5万件まで。現在のキーワード・検索条件を反映します。"
           className="inline-flex shrink-0 items-center rounded-lg border border-accent/30 bg-accent/5 px-3 py-1.5 text-xs font-semibold text-accent transition hover:bg-accent/10"
         >
           CSV をダウンロード

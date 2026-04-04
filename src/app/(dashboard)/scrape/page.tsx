@@ -3,13 +3,23 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { LoadingSpinner, ProgressBar } from "@/components/ui";
 
+type ScrapeSelectableInput = { id: string; label: string };
+
 type ScrapeConfig = {
   configured: boolean;
   bundle?: string;
   input: string;
+  selectableInputs?: ScrapeSelectableInput[];
   output: string;
   outputDir: string;
   python: string;
+};
+
+type AreaRow = {
+  index: number;
+  prefecture: string;
+  city: string;
+  scraper: string;
 };
 
 type ImportSummary = {
@@ -29,8 +39,15 @@ type ScrapeResult = {
   error?: string;
 };
 
+const DEFAULT_INPUT_FILE = "site_url_jobmedley_raks";
+
 export default function ScrapePage() {
   const [cfg, setCfg] = useState<ScrapeConfig | null>(null);
+  const [inputFile, setInputFile] = useState(DEFAULT_INPUT_FILE);
+  const [areas, setAreas] = useState<AreaRow[]>([]);
+  const [areasLoading, setAreasLoading] = useState(false);
+  const [areasErr, setAreasErr] = useState<string | null>(null);
+  const [selectedIndices, setSelectedIndices] = useState<Set<number>>(new Set());
   const [maxAreas, setMaxAreas] = useState("");
   const [importAfter, setImportAfter] = useState(true);
   const [running, setRunning] = useState(false);
@@ -58,6 +75,43 @@ export default function ScrapePage() {
   }, [loadCfg]);
 
   useEffect(() => {
+    if (!cfg) return;
+
+    let cancelled = false;
+    setAreasErr(null);
+    setAreasLoading(true);
+    setAreas([]);
+    setSelectedIndices(new Set());
+
+    fetch(
+      `/api/scrape/areas?inputFile=${encodeURIComponent(inputFile)}`,
+      { credentials: "include" }
+    )
+      .then(async (r) => {
+        const data = (await r.json()) as {
+          areas?: AreaRow[];
+          error?: string;
+        };
+        if (!r.ok) {
+          throw new Error(data.error ?? `HTTP ${r.status}`);
+        }
+        if (!cancelled && data.areas) setAreas(data.areas);
+      })
+      .catch((e) => {
+        if (!cancelled) {
+          setAreasErr(e instanceof Error ? e.message : String(e));
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setAreasLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [inputFile, cfg]);
+
+  useEffect(() => {
     if (!running) return;
     logEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [liveStdout, liveStderr, running]);
@@ -68,11 +122,21 @@ export default function ScrapePage() {
     setLiveStderr("");
     setRunning(true);
 
-    const body: { maxAreas?: number; importAfter: boolean } = {
+    const body: {
+      maxAreas?: number;
+      importAfter: boolean;
+      inputFile: string;
+      areaIndices?: number[];
+    } = {
       importAfter,
+      inputFile,
     };
-    const n = parseInt(maxAreas, 10);
-    if (!Number.isNaN(n) && n > 0) body.maxAreas = n;
+    if (selectedIndices.size > 0) {
+      body.areaIndices = [...selectedIndices].sort((a, b) => a - b);
+    } else {
+      const n = parseInt(maxAreas, 10);
+      if (!Number.isNaN(n) && n > 0) body.maxAreas = n;
+    }
 
     let finalResult: ScrapeResult = {
       ok: false,
@@ -237,17 +301,102 @@ export default function ScrapePage() {
         }}
       >
         <div className="space-y-5">
+          <div>
+            <label className="block text-sm font-medium text-sumi/90">
+              メディア（入力ファイル）
+            </label>
+            <select
+              className="mt-2 w-full max-w-md rounded-lg border border-wash bg-paper px-3 py-2 text-sm outline-none ring-ai/20 focus:ring-2"
+              value={inputFile}
+              onChange={(e) => setInputFile(e.target.value)}
+              disabled={!cfg.configured || running}
+            >
+              {(cfg.selectableInputs?.length
+                ? cfg.selectableInputs
+                : [
+                    { id: DEFAULT_INPUT_FILE, label: "Job Medley（job-medley.com）" },
+                    {
+                      id: "site_url_wellme_raks",
+                      label: "WellMe（kaigojob.com）",
+                    },
+                  ]
+              ).map((opt) => (
+                <option key={opt.id} value={opt.id}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+            <p className="mt-1 text-xs text-sumi/70">
+              ファイル: <code className="rounded bg-wash/80 px-1">{inputFile}</code>
+            </p>
+          </div>
+
+          <div>
+            <p className="text-sm font-medium text-sumi/90">対象地域</p>
+            <p className="mt-1 text-xs text-sumi/70">
+              未選択のときは全地域。チェックを付けるとその行だけ（0 始まり index は一覧左端）。
+            </p>
+            {areasErr ? (
+              <p className="mt-2 text-sm text-red-700">{areasErr}</p>
+            ) : null}
+            {areasLoading ? (
+              <div className="mt-3 flex items-center gap-2 text-sm text-sumi/80">
+                <LoadingSpinner size="sm" />
+                地域一覧を読み込み中…
+              </div>
+            ) : (
+              <div className="mt-3 max-h-56 overflow-auto rounded-lg border border-wash bg-paper/50 p-2">
+                {areas.length === 0 ? (
+                  <p className="px-2 py-3 text-sm text-sumi/60">地域がありません</p>
+                ) : (
+                  <ul className="space-y-1">
+                    {areas.map((a) => {
+                      const on = selectedIndices.has(a.index);
+                      return (
+                        <li key={a.index}>
+                          <label className="flex cursor-pointer items-start gap-2 rounded px-2 py-1.5 text-sm hover:bg-wash/60">
+                            <input
+                              type="checkbox"
+                              className="mt-0.5 rounded border-wash text-ai focus:ring-ai"
+                              checked={on}
+                              onChange={() => {
+                                setSelectedIndices((prev) => {
+                                  const next = new Set(prev);
+                                  if (next.has(a.index)) next.delete(a.index);
+                                  else next.add(a.index);
+                                  return next;
+                                });
+                              }}
+                              disabled={!cfg.configured || running}
+                            />
+                            <span className="tabular-nums text-sumi/50">{a.index}</span>
+                            <span>
+                              {a.prefecture} · {a.city}
+                              <span className="ml-2 text-xs text-sumi/55">
+                                ({a.scraper === "wellme" ? "WellMe" : "Job Medley"})
+                              </span>
+                            </span>
+                          </label>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+              </div>
+            )}
+          </div>
+
           <label className="block text-sm font-medium text-sumi/90">
-            最大地域数（空欄で全件・テスト用に数値）
+            最大地域数（地域未選択時のみ・空欄で全件）
             <input
               type="number"
               min={1}
               max={500}
               placeholder="例: 1"
-              className="mt-2 w-full max-w-xs rounded-lg border border-wash bg-paper px-3 py-2 text-sm tabular-nums outline-none ring-ai/20 focus:ring-2"
+              className="mt-2 w-full max-w-xs rounded-lg border border-wash bg-paper px-3 py-2 text-sm tabular-nums outline-none ring-ai/20 focus:ring-2 disabled:opacity-50"
               value={maxAreas}
               onChange={(e) => setMaxAreas(e.target.value)}
-              disabled={!cfg.configured || running}
+              disabled={!cfg.configured || running || selectedIndices.size > 0}
             />
           </label>
           <label className="flex cursor-pointer items-center gap-2 text-sm text-sumi">
