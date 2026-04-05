@@ -209,11 +209,12 @@ export function buildJobsMongoFilter(p: ParsedJobsQuery): Record<string, unknown
     }
   }
 
+  /** 下限・上限はいずれも円単位。下限＝求人の下限額がこの値以上、上限＝求人の上限額がこの値以下 */
   if (p.salaryGte !== undefined) {
-    parts.push({ salary_max: { $gte: p.salaryGte } });
+    parts.push({ salary_min: { $gte: p.salaryGte } });
   }
   if (p.salaryLte !== undefined) {
-    parts.push({ salary_min: { $lte: p.salaryLte } });
+    parts.push({ salary_max: { $lte: p.salaryLte } });
   }
 
   if (p.q) {

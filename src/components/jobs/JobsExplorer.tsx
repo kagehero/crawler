@@ -526,7 +526,7 @@ export function JobsExplorer() {
                   勤務地
                 </legend>
                 <p className="mb-1.5 text-[10px] leading-snug text-sumi/70">
-                  候補は取得対象エリアに合わせています。
+                検索候補は貴社展開エリアに合わせています。以下（参考）を参照下さい。
                 </p>
                 <div className={FILTER_FIELD_GRID}>
                   <div className="flex min-w-0 flex-col gap-0.5">
@@ -627,7 +627,7 @@ export function JobsExplorer() {
                 </div>
                 <details className="group mt-2 rounded-md border border-wash/90 bg-paper/50 transition-shadow duration-200 ease-out open:border-wash">
                   <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-2 py-1.5 text-[10px] font-medium text-sumi/90 [&::-webkit-details-marker]:hidden">
-                    <span>対象市区町村（参考）</span>
+                    <span>（参考）検索可能・都道府県 / 市区町村</span>
                     <span
                       className="inline-block shrink-0 text-sumi/45 transition-transform duration-200 ease-out motion-reduce:transition-none group-open:rotate-180"
                       aria-hidden
@@ -898,10 +898,13 @@ export function JobsExplorer() {
                       </FilterDropdownPanel>
                     </details>
                   </div>
+                  <p className="text-[10px] leading-snug text-sumi/70">
+                    ※金額は円単位で入力下さい。（例 / 月給の場合）300000
+                  </p>
                   <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:items-start">
                     <label className="flex min-w-0 flex-col gap-0.5">
                       <span className="text-[10px] font-medium text-sumi/90">
-                        下限（万円目安）
+                        下限
                       </span>
                       <input
                         name="salaryGte"
@@ -913,15 +916,14 @@ export function JobsExplorer() {
                             ? String(parsed.salaryGte)
                             : ""
                         }
-                        placeholder="例：300"
-                        title="salary_max がこの値以上の求人"
+                        title="求人の下限額（salary_min）がこの値以上の求人"
                         onBlur={() => scheduleFilterApply(true)}
                         className="w-full min-w-0 rounded-lg border border-wash bg-white px-2 py-1.5 text-xs text-ink shadow-sm outline-none ring-ai/15 focus:ring-2"
                       />
                     </label>
                     <label className="flex min-w-0 flex-col gap-0.5">
                       <span className="text-[10px] font-medium text-sumi/90">
-                        上限（万円目安）
+                        上限
                       </span>
                       <input
                         name="salaryLte"
@@ -933,8 +935,7 @@ export function JobsExplorer() {
                             ? String(parsed.salaryLte)
                             : ""
                         }
-                        placeholder="例：500"
-                        title="salary_min がこの値以下の求人"
+                        title="求人の上限額（salary_max）がこの値以下の求人"
                         onBlur={() => scheduleFilterApply(true)}
                         className="w-full min-w-0 rounded-lg border border-wash bg-white px-2 py-1.5 text-xs text-ink shadow-sm outline-none ring-ai/15 focus:ring-2"
                       />
