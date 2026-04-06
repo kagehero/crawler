@@ -75,17 +75,25 @@ def _parse_salary_from_p_salary_block(soup: BeautifulSoup) -> tuple[int | None, 
     return None, None, payment_method
 
 
+_JOB_POSTING_URL_RE = re.compile(
+    r"https://www\.kaigojob\.com/[\w-]+/job-postings-\d+",
+)
+
+
 def _extract_job_links(html: str) -> list[str]:
-    """Extract job detail URLs from search results."""
+    """Extract job detail URLs from search results (anchor tags and JSON/SPA embeds)."""
+    seen: set[str] = set()
     soup = BeautifulSoup(html, "lxml")
-    links: list[str] = []
     for a in soup.find_all("a", href=True):
         href = a.get("href", "")
-        if "/job-postings-" in href or "/care-worker/job-postings-" in href:
-            full = urljoin(WELLME_BASE, href) if href.startswith("/") else href
-            if "kaigojob.com" in full and "job-postings-" in full:
-                links.append(full.split("?")[0])
-    return sorted(set(links))
+        if "/job-postings-" not in href:
+            continue
+        full = urljoin(WELLME_BASE, href) if href.startswith("/") else href
+        if "kaigojob.com" in full and "job-postings-" in full:
+            seen.add(full.split("?")[0])
+    for m in _JOB_POSTING_URL_RE.finditer(html):
+        seen.add(m.group(0).split("?")[0])
+    return sorted(seen)
 
 
 def _parse_job_detail(html: str, job_url: str, search_prefecture: str, search_city: str) -> dict[str, Any]:
@@ -194,7 +202,7 @@ def _parse_job_detail(html: str, job_url: str, search_prefecture: str, search_ci
         "facility_name": facility_name,
         "prefecture": prefecture,
         "city": city,
-        "job_category": "介護職員・ヘルパー",  # care-worker 固定
+        "job_category": job_type,
         "job_type": job_type,
         "employment_type": employment_type,
         "salary_min": salary_min,
