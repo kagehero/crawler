@@ -74,14 +74,23 @@ def resolve_jobmedley_areas(pairs: list[tuple[str, str]]) -> list[tuple[str, str
 
 
 def resolve_wellme_areas(jobmedley_results: list[tuple[str, str, str]]) -> list[tuple[str, str, str]]:
-    """Build WellMe URLs from Job Medley city_id (JIS code)."""
+    """Build WellMe job-postings search URLs (都道府県 + 市区町村)."""
+    from urllib.parse import urlencode
+
     results: list[tuple[str, str, str]] = []
     for pref, city, jm_url in jobmedley_results:
         import re
+
         m = re.search(r"city_id=(\d+)", jm_url)
         if m:
-            city_code = m.group(1)
-            url = f"https://www.kaigojob.com/care-worker/c-{city_code}?sorter_strategy=newer_first"
+            q = urlencode(
+                [
+                    ("q[multiple_office_cities][]", city),
+                    ("q[office_prefecture]", pref),
+                    ("q[sorter_strategy]", "newer_first"),
+                ]
+            )
+            url = f"https://www.kaigojob.com/job-postings?{q}"
             results.append((pref, city, url))
         else:
             print(f"  [skip] {pref} {city}: no city_id for WellMe", file=sys.stderr)
