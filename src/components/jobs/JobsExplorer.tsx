@@ -3,6 +3,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -30,6 +31,10 @@ import {
   citiesForTargetPrefecture,
   targetPrefectureLabels,
 } from "@/lib/target-regions";
+import {
+  jobCategoryGroupLabels,
+  jobCategoryGroupsConfigured,
+} from "@/lib/job-category-groups";
 
 type Job = {
   _id: string;
@@ -106,6 +111,25 @@ function sortedJoin(values: string[] | undefined): string {
   return [...(values ?? [])].sort().join("\0");
 }
 
+const SOURCE_KEYS_ALL: SourceKey[] = ["job_medley", "wellme", "unknown"];
+
+/** 現在の選択が候補一覧と一致するか（「全て選択」トグル用） */
+function isSelectionAllOf(
+  selected: readonly string[] | undefined,
+  all: readonly string[]
+): boolean {
+  if (all.length === 0) return false;
+  const s = selected ?? [];
+  if (s.length !== all.length) return false;
+  return all.every((x) => s.includes(x));
+}
+
+function isSourceSelectionAll(
+  selected: readonly SourceKey[] | undefined
+): boolean {
+  return isSelectionAllOf(selected, SOURCE_KEYS_ALL);
+}
+
 function parsedFromUrl(sp: URLSearchParams): ParsedJobsQuery {
   return parseJobsSearchParams(sp);
 }
@@ -170,8 +194,10 @@ function filterDropdownLabel(
   return placeholder;
 }
 
-const FILTER_INPUT_DEBOUNCE_MS = 420;
 const KEYWORD_DEBOUNCE_MS = 450;
+
+const SELECT_ALL_BTN =
+  "rounded px-2 py-0.5 text-[10px] font-medium text-ai hover:bg-ai/10";
 
 /** 多ページ時は両端＋現在付近を表示し、飛びは … で示す */
 function getPaginationItems(
@@ -209,7 +235,9 @@ export function JobsExplorer() {
     [searchParams]
   );
   const parsedRef = useRef(parsed);
-  parsedRef.current = parsed;
+  useLayoutEffect(() => {
+    parsedRef.current = parsed;
+  }, [parsed]);
 
   const [items, setItems] = useState<Job[]>([]);
   const [total, setTotal] = useState(0);
@@ -238,10 +266,10 @@ export function JobsExplorer() {
     return citiesForPrefectureList(parsed.prefectures);
   }, [parsed.prefectures]);
 
-  const jobCategoryOptions = useMemo(
-    () => mergeBySourceLists(options?.jobCategoriesBySource, parsed.sources),
-    [options?.jobCategoriesBySource, parsed.sources]
-  );
+  const jobCategoryOptions = useMemo(() => {
+    if (jobCategoryGroupsConfigured()) return jobCategoryGroupLabels();
+    return mergeBySourceLists(options?.jobCategoriesBySource, parsed.sources);
+  }, [options?.jobCategoriesBySource, parsed.sources]);
 
   const serviceTypeOptions = useMemo(() => {
     const base = uniqueServiceTypeTokens(
@@ -297,158 +325,150 @@ export function JobsExplorer() {
       .catch(() => setOptions(null));
   }, []);
 
-  const filterFormRef = useRef<HTMLFormElement>(null);
-  const filterApplyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
-    null
-  );
   const keywordFormRef = useRef<HTMLFormElement>(null);
+  const keywordDraftRef = useRef<string>("");
+  const [keywordDraft, setKeywordDraft] = useState(() => parsed.q ?? "");
   const keywordApplyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
     null
   );
 
-  /** 検索条件フィルタ（キーワード・件数は URL のまま） */
-  const applyFilterForm = useCallback(
-    (form: FormData) => {
-      const get = (k: string) => (form.get(k) as string)?.trim() ?? "";
-      const sortRaw = get("sort");
-      const sort: ParsedJobsQuery["sort"] =
-        sortRaw === "salary_high" ||
-        sortRaw === "salary_low" ||
-        sortRaw === "name_asc"
-          ? sortRaw
-          : "imported_desc";
+  /* URL の q が外部要因で変わったときだけローカル入力と同期（キーワードはデバウンス送信） */
+  useEffect(() => {
+    const q = parsed.q ?? "";
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- URL と入力欄を同期
+    setKeywordDraft(q);
+    keywordDraftRef.current = q;
+  }, [parsed.q]);
 
-      let salaryGte: number | undefined;
-      let salaryLte: number | undefined;
-      const sg = get("salaryGte");
-      const sl = get("salaryLte");
-      if (sg !== "") {
-        const n = Number(sg);
-        if (Number.isFinite(n)) salaryGte = n;
-      }
-      if (sl !== "") {
-        const n = Number(sl);
-        if (Number.isFinite(n)) salaryLte = n;
-      }
+  const filterFormRef = useRef<HTMLFormElement>(null);
 
+  /** URL 同期（フォームの key で再マウントしない → 複数選択ドロップダウンが閉じない） */
+  const patchFilter = useCallback(
+    (patch: Partial<ParsedJobsQuery>) => {
       const p = parsedRef.current;
-      const newPrefectures = form
-        .getAll("prefecture")
-        .map((s) => String(s).trim())
-        .filter(Boolean);
-
-      const newSources = form
-        .getAll("source")
-        .map((s) => String(s).trim())
-        .filter((s): s is SourceKey =>
-          s === "job_medley" || s === "wellme" || s === "unknown"
-        );
-      const sourceChanged =
-        sortedJoin(newSources) !== sortedJoin(p.sources);
-
-      const allowedCities = citiesForPrefectureList(newPrefectures);
-      const newCitiesRaw = form
-        .getAll("city")
-        .map((s) => String(s).trim())
-        .filter(Boolean);
-      const newCitiesFiltered = newCitiesRaw.filter((c) =>
-        allowedCities.includes(c)
+      router.push(
+        `/jobs?${jobsQueryToSearchParams({ ...p, ...patch, page: 1 }).toString()}`
       );
-
-      const newEmployments = form
-        .getAll("employment")
-        .map((s) => String(s).trim())
-        .filter(Boolean);
-
-      const newJobCategories = sourceChanged
-        ? []
-        : form
-            .getAll("jobCategory")
-            .map((s) => String(s).trim())
-            .filter(Boolean);
-      const newServiceTypes = sourceChanged
-        ? []
-        : form
-            .getAll("serviceType")
-            .map((s) => String(s).trim())
-            .filter(Boolean);
-
-      const paymentVals = form
-        .getAll("paymentType")
-        .map((s) => String(s).trim())
-        .filter((s) => (PAYMENT_TYPE_OPTIONS as readonly string[]).includes(s));
-      const newPaymentTypes = paymentVals.length
-        ? ([...new Set(paymentVals)] as PaymentTypeOption[])
-        : undefined;
-
-      const merged: ParsedJobsQuery = {
-        page: 1,
-        limit: p.limit,
-        q: p.q,
-        prefectures: newPrefectures.length ? newPrefectures : undefined,
-        cities: newCitiesFiltered.length ? newCitiesFiltered : undefined,
-        sources: newSources.length ? newSources : undefined,
-        employments: newEmployments.length ? newEmployments : undefined,
-        jobCategories: newJobCategories.length ? newJobCategories : undefined,
-        serviceTypes: newServiceTypes.length ? newServiceTypes : undefined,
-        paymentTypes: newPaymentTypes,
-        salaryGte,
-        salaryLte,
-        sort,
-      };
-      router.push(`/jobs?${jobsQueryToSearchParams(merged).toString()}`);
     },
     [router]
   );
 
-  const scheduleFilterApply = useCallback(
-    (immediate: boolean) => {
-      if (filterApplyTimerRef.current) {
-        clearTimeout(filterApplyTimerRef.current);
-        filterApplyTimerRef.current = null;
-      }
-      const run = () => {
-        const f = filterFormRef.current;
-        if (f) applyFilterForm(new FormData(f));
-      };
-      if (immediate) run();
-      else {
-        filterApplyTimerRef.current = setTimeout(() => {
-          filterApplyTimerRef.current = null;
-          run();
-        }, FILTER_INPUT_DEBOUNCE_MS);
-      }
+  const togglePrefecture = useCallback(
+    (pr: string) => {
+      const p = parsedRef.current;
+      const cur = p.prefectures ?? [];
+      const next = cur.includes(pr)
+        ? cur.filter((x) => x !== pr)
+        : [...cur, pr];
+      const allowed = citiesForPrefectureList(next);
+      const cities = (p.cities ?? []).filter((c) => allowed.includes(c));
+      patchFilter({
+        prefectures: next.length ? next : undefined,
+        cities: cities.length ? cities : undefined,
+      });
     },
-    [applyFilterForm]
+    [patchFilter]
   );
 
-  const handleFilterFormChange = useCallback(
-    (e: React.FormEvent<HTMLFormElement>) => {
-      const t = e.target as HTMLElement;
-      if (t instanceof HTMLInputElement) {
-        if (
-          t.type === "number" &&
-          (t.name === "salaryGte" || t.name === "salaryLte")
-        ) {
-          return;
-        }
-      }
-      if (t instanceof HTMLSelectElement) {
-        scheduleFilterApply(true);
-        return;
-      }
-      if (t instanceof HTMLInputElement) {
-        scheduleFilterApply(t.type === "checkbox");
-      }
+  const toggleCity = useCallback(
+    (city: string) => {
+      const p = parsedRef.current;
+      const cur = p.cities ?? [];
+      const next = cur.includes(city)
+        ? cur.filter((x) => x !== city)
+        : [...cur, city];
+      patchFilter({ cities: next.length ? next : undefined });
     },
-    [scheduleFilterApply]
+    [patchFilter]
   );
 
-  const applyKeywordFromForm = useCallback(() => {
-    const f = keywordFormRef.current;
+  const toggleSource = useCallback(
+    (key: SourceKey) => {
+      const p = parsedRef.current;
+      const cur = p.sources ?? [];
+      const next = cur.includes(key)
+        ? cur.filter((x) => x !== key)
+        : [...cur, key];
+      const sourceChanged = sortedJoin(next) !== sortedJoin(p.sources);
+      patchFilter({
+        sources: next.length ? next : undefined,
+        jobCategories: sourceChanged ? undefined : p.jobCategories,
+        serviceTypes: sourceChanged ? undefined : p.serviceTypes,
+      });
+    },
+    [patchFilter]
+  );
+
+  const toggleEmployment = useCallback(
+    (e: string) => {
+      const p = parsedRef.current;
+      const cur = p.employments ?? [];
+      const next = cur.includes(e)
+        ? cur.filter((x) => x !== e)
+        : [...cur, e];
+      patchFilter({ employments: next.length ? next : undefined });
+    },
+    [patchFilter]
+  );
+
+  const toggleJobCategory = useCallback(
+    (c: string) => {
+      const p = parsedRef.current;
+      const cur = p.jobCategories ?? [];
+      const next = cur.includes(c)
+        ? cur.filter((x) => x !== c)
+        : [...cur, c];
+      patchFilter({ jobCategories: next.length ? next : undefined });
+    },
+    [patchFilter]
+  );
+
+  const toggleServiceType = useCallback(
+    (c: string) => {
+      const p = parsedRef.current;
+      const cur = p.serviceTypes ?? [];
+      const next = cur.includes(c)
+        ? cur.filter((x) => x !== c)
+        : [...cur, c];
+      patchFilter({ serviceTypes: next.length ? next : undefined });
+    },
+    [patchFilter]
+  );
+
+  const togglePaymentType = useCallback(
+    (pm: PaymentTypeOption) => {
+      const p = parsedRef.current;
+      const cur = p.paymentTypes ?? [];
+      const next = cur.includes(pm)
+        ? cur.filter((x) => x !== pm)
+        : [...cur, pm];
+      patchFilter({
+        paymentTypes: next.length ? next : undefined,
+      });
+    },
+    [patchFilter]
+  );
+
+  const applySalaryFromForm = useCallback(() => {
+    const f = filterFormRef.current;
     if (!f) return;
     const fd = new FormData(f);
-    const raw = (fd.get("q") as string)?.trim() ?? "";
+    const parseNum = (s: string): number | undefined => {
+      const t = s.trim();
+      if (t === "") return undefined;
+      const n = Number(t);
+      return Number.isFinite(n) ? n : undefined;
+    };
+    const sg = (fd.get("salaryGte") as string) ?? "";
+    const sl = (fd.get("salaryLte") as string) ?? "";
+    patchFilter({
+      salaryGte: parseNum(sg),
+      salaryLte: parseNum(sl),
+    });
+  }, [patchFilter]);
+
+  const applyKeywordFromForm = useCallback(() => {
+    const raw = keywordDraftRef.current.trim();
     const p = parsedRef.current;
     const merged: ParsedJobsQuery = {
       ...p,
@@ -471,9 +491,6 @@ export function JobsExplorer() {
 
   useEffect(() => {
     return () => {
-      if (filterApplyTimerRef.current) {
-        clearTimeout(filterApplyTimerRef.current);
-      }
       if (keywordApplyTimerRef.current) {
         clearTimeout(keywordApplyTimerRef.current);
       }
@@ -515,10 +532,8 @@ export function JobsExplorer() {
           {filtersOpen && (
             <form
               ref={filterFormRef}
-              key={`flt-${searchParams.toString()}`}
               className="overflow-visible px-3 pb-3 pt-0.5 sm:px-4"
               onSubmit={(e) => e.preventDefault()}
-              onChange={handleFilterFormChange}
             >
               <div className="grid grid-cols-1 gap-3 overflow-visible sm:grid-cols-2 sm:items-start">
               <fieldset className="min-h-0 rounded-lg border border-ai/25 bg-white/95 px-2.5 py-2 shadow-sm sm:px-3">
@@ -550,6 +565,36 @@ export function JobsExplorer() {
                         <FilterDropdownChevron />
                       </summary>
                       <FilterDropdownPanel ariaLabel="都道府県">
+                        <div className="border-b border-wash/80 bg-paper/30 px-2 py-1">
+                          <button
+                            type="button"
+                            className={SELECT_ALL_BTN}
+                            onClick={() => {
+                              if (
+                                isSelectionAllOf(
+                                  parsed.prefectures,
+                                  prefectureOptions
+                                )
+                              ) {
+                                patchFilter({
+                                  prefectures: undefined,
+                                  cities: undefined,
+                                });
+                              } else {
+                                patchFilter({
+                                  prefectures: [...prefectureOptions],
+                                });
+                              }
+                            }}
+                          >
+                            {isSelectionAllOf(
+                              parsed.prefectures,
+                              prefectureOptions
+                            )
+                              ? "全て解除"
+                              : "全て選択"}
+                          </button>
+                        </div>
                         <div className={FILTER_CHECKBOX_LIST}>
                           {prefectureOptions.map((pr) => (
                             <label
@@ -558,11 +603,10 @@ export function JobsExplorer() {
                             >
                               <input
                                 type="checkbox"
-                                name="prefecture"
-                                value={pr}
-                                defaultChecked={
+                                checked={
                                   parsed.prefectures?.includes(pr) ?? false
                                 }
+                                onChange={() => togglePrefecture(pr)}
                                 className="h-3.5 w-3.5 shrink-0 rounded border-wash text-ai focus:ring-ai"
                               />
                               <span>{pr}</span>
@@ -601,6 +645,25 @@ export function JobsExplorer() {
                           <FilterDropdownChevron />
                         </summary>
                         <FilterDropdownPanel ariaLabel="市区町村">
+                          <div className="border-b border-wash/80 bg-paper/30 px-2 py-1">
+                            <button
+                              type="button"
+                              className={SELECT_ALL_BTN}
+                              onClick={() => {
+                                if (
+                                  isSelectionAllOf(parsed.cities, cityOptions)
+                                ) {
+                                  patchFilter({ cities: undefined });
+                                } else if (cityOptions.length > 0) {
+                                  patchFilter({ cities: [...cityOptions] });
+                                }
+                              }}
+                            >
+                              {isSelectionAllOf(parsed.cities, cityOptions)
+                                ? "全て解除"
+                                : "全て選択"}
+                            </button>
+                          </div>
                           <div className={FILTER_CHECKBOX_LIST}>
                             {cityOptions.map((c) => (
                               <label
@@ -609,11 +672,8 @@ export function JobsExplorer() {
                               >
                                 <input
                                   type="checkbox"
-                                  name="city"
-                                  value={c}
-                                  defaultChecked={
-                                    parsed.cities?.includes(c) ?? false
-                                  }
+                                  checked={parsed.cities?.includes(c) ?? false}
+                                  onChange={() => toggleCity(c)}
                                   className="h-3.5 w-3.5 shrink-0 rounded border-wash text-ai focus:ring-ai"
                                 />
                                 <span>{c}</span>
@@ -683,6 +743,27 @@ export function JobsExplorer() {
                         <FilterDropdownChevron />
                       </summary>
                       <FilterDropdownPanel ariaLabel="媒体名">
+                        <div className="border-b border-wash/80 bg-paper/30 px-2 py-1">
+                          <button
+                            type="button"
+                            className={SELECT_ALL_BTN}
+                            onClick={() => {
+                              if (isSourceSelectionAll(parsed.sources)) {
+                                patchFilter({
+                                  sources: undefined,
+                                  jobCategories: undefined,
+                                  serviceTypes: undefined,
+                                });
+                              } else {
+                                patchFilter({ sources: [...SOURCE_KEYS_ALL] });
+                              }
+                            }}
+                          >
+                            {isSourceSelectionAll(parsed.sources)
+                              ? "全て解除"
+                              : "全て選択"}
+                          </button>
+                        </div>
                         <div className={FILTER_CHECKBOX_LIST}>
                           {(
                             [
@@ -697,11 +778,10 @@ export function JobsExplorer() {
                             >
                               <input
                                 type="checkbox"
-                                name="source"
-                                value={key}
-                                defaultChecked={
+                                checked={
                                   parsed.sources?.includes(key) ?? false
                                 }
+                                onChange={() => toggleSource(key)}
                                 className="h-3.5 w-3.5 shrink-0 rounded border-wash text-ai focus:ring-ai"
                               />
                               <span>{label}</span>
@@ -733,6 +813,33 @@ export function JobsExplorer() {
                         <FilterDropdownChevron />
                       </summary>
                       <FilterDropdownPanel ariaLabel="雇用形態">
+                        <div className="border-b border-wash/80 bg-paper/30 px-2 py-1">
+                          <button
+                            type="button"
+                            className={SELECT_ALL_BTN}
+                            onClick={() => {
+                              if (
+                                isSelectionAllOf(
+                                  parsed.employments,
+                                  employmentOptions
+                                )
+                              ) {
+                                patchFilter({ employments: undefined });
+                              } else if (employmentOptions.length > 0) {
+                                patchFilter({
+                                  employments: [...employmentOptions],
+                                });
+                              }
+                            }}
+                          >
+                            {isSelectionAllOf(
+                              parsed.employments,
+                              employmentOptions
+                            )
+                              ? "全て解除"
+                              : "全て選択"}
+                          </button>
+                        </div>
                         <div className={FILTER_CHECKBOX_LIST}>
                           {employmentOptions.map((e) => (
                             <label
@@ -741,11 +848,10 @@ export function JobsExplorer() {
                             >
                               <input
                                 type="checkbox"
-                                name="employment"
-                                value={e}
-                                defaultChecked={
+                                checked={
                                   parsed.employments?.includes(e) ?? false
                                 }
+                                onChange={() => toggleEmployment(e)}
                                 className="h-3.5 w-3.5 shrink-0 rounded border-wash text-ai focus:ring-ai"
                               />
                               <span className="break-all">{e}</span>
@@ -758,6 +864,11 @@ export function JobsExplorer() {
                   <div className="flex min-w-0 flex-col gap-0.5">
                     <span className="text-[10px] font-medium text-sumi/90">
                       職種（複数可）
+                      {jobCategoryGroupsConfigured() ? (
+                        <span className="block font-normal text-sumi/60">
+                          資格求人の条件（グループ別・マスタ参照）
+                        </span>
+                      ) : null}
                     </span>
                     <details className={FILTER_DROPDOWN_DETAILS}>
                       <summary className={FILTER_DROPDOWN_SUMMARY}>
@@ -777,6 +888,33 @@ export function JobsExplorer() {
                         <FilterDropdownChevron />
                       </summary>
                       <FilterDropdownPanel ariaLabel="職種">
+                        <div className="border-b border-wash/80 bg-paper/30 px-2 py-1">
+                          <button
+                            type="button"
+                            className={SELECT_ALL_BTN}
+                            onClick={() => {
+                              if (
+                                isSelectionAllOf(
+                                  parsed.jobCategories,
+                                  jobCategoryOptions
+                                )
+                              ) {
+                                patchFilter({ jobCategories: undefined });
+                              } else if (jobCategoryOptions.length > 0) {
+                                patchFilter({
+                                  jobCategories: [...jobCategoryOptions],
+                                });
+                              }
+                            }}
+                          >
+                            {isSelectionAllOf(
+                              parsed.jobCategories,
+                              jobCategoryOptions
+                            )
+                              ? "全て解除"
+                              : "全て選択"}
+                          </button>
+                        </div>
                         <div className={FILTER_CHECKBOX_LIST}>
                           {jobCategoryOptions.map((c) => (
                             <label
@@ -785,11 +923,10 @@ export function JobsExplorer() {
                             >
                               <input
                                 type="checkbox"
-                                name="jobCategory"
-                                value={c}
-                                defaultChecked={
+                                checked={
                                   parsed.jobCategories?.includes(c) ?? false
                                 }
+                                onChange={() => toggleJobCategory(c)}
                                 className="h-3.5 w-3.5 shrink-0 rounded border-wash text-ai focus:ring-ai"
                               />
                               <span className="break-all">{c}</span>
@@ -821,6 +958,33 @@ export function JobsExplorer() {
                         <FilterDropdownChevron />
                       </summary>
                       <FilterDropdownPanel ariaLabel="サービス種別">
+                        <div className="border-b border-wash/80 bg-paper/30 px-2 py-1">
+                          <button
+                            type="button"
+                            className={SELECT_ALL_BTN}
+                            onClick={() => {
+                              if (
+                                isSelectionAllOf(
+                                  parsed.serviceTypes,
+                                  serviceTypeOptions
+                                )
+                              ) {
+                                patchFilter({ serviceTypes: undefined });
+                              } else if (serviceTypeOptions.length > 0) {
+                                patchFilter({
+                                  serviceTypes: [...serviceTypeOptions],
+                                });
+                              }
+                            }}
+                          >
+                            {isSelectionAllOf(
+                              parsed.serviceTypes,
+                              serviceTypeOptions
+                            )
+                              ? "全て解除"
+                              : "全て選択"}
+                          </button>
+                        </div>
                         <div className={FILTER_CHECKBOX_LIST}>
                           {serviceTypeOptions.map((c) => (
                             <label
@@ -829,11 +993,10 @@ export function JobsExplorer() {
                             >
                               <input
                                 type="checkbox"
-                                name="serviceType"
-                                value={c}
-                                defaultChecked={
+                                checked={
                                   parsed.serviceTypes?.includes(c) ?? false
                                 }
+                                onChange={() => toggleServiceType(c)}
                                 className="h-3.5 w-3.5 shrink-0 rounded border-wash text-ai focus:ring-ai"
                               />
                               <span className="break-all">{c}</span>
@@ -876,6 +1039,34 @@ export function JobsExplorer() {
                         <FilterDropdownChevron />
                       </summary>
                       <FilterDropdownPanel ariaLabel="支給区分">
+                        <div className="border-b border-wash/80 bg-paper/30 px-2 py-1">
+                          <button
+                            type="button"
+                            className={SELECT_ALL_BTN}
+                            onClick={() => {
+                              const allPm = [
+                                ...PAYMENT_TYPE_OPTIONS,
+                              ] as PaymentTypeOption[];
+                              if (
+                                isSelectionAllOf(
+                                  parsed.paymentTypes,
+                                  allPm
+                                )
+                              ) {
+                                patchFilter({ paymentTypes: undefined });
+                              } else {
+                                patchFilter({ paymentTypes: allPm });
+                              }
+                            }}
+                          >
+                            {isSelectionAllOf(
+                              parsed.paymentTypes,
+                              [...PAYMENT_TYPE_OPTIONS]
+                            )
+                              ? "全て解除"
+                              : "全て選択"}
+                          </button>
+                        </div>
                         <div className={FILTER_CHECKBOX_LIST}>
                           {PAYMENT_TYPE_OPTIONS.map((pm) => (
                             <label
@@ -884,11 +1075,10 @@ export function JobsExplorer() {
                             >
                               <input
                                 type="checkbox"
-                                name="paymentType"
-                                value={pm}
-                                defaultChecked={
+                                checked={
                                   parsed.paymentTypes?.includes(pm) ?? false
                                 }
+                                onChange={() => togglePaymentType(pm)}
                                 className="h-3.5 w-3.5 shrink-0 rounded border-wash text-ai focus:ring-ai"
                               />
                               <span>{pm}</span>
@@ -907,6 +1097,7 @@ export function JobsExplorer() {
                         下限
                       </span>
                       <input
+                        key={`salaryGte-${parsed.salaryGte ?? ""}`}
                         name="salaryGte"
                         type="number"
                         inputMode="numeric"
@@ -917,7 +1108,7 @@ export function JobsExplorer() {
                             : ""
                         }
                         title="求人の下限額（salary_min）がこの値以上の求人"
-                        onBlur={() => scheduleFilterApply(true)}
+                        onBlur={() => applySalaryFromForm()}
                         className="w-full min-w-0 rounded-lg border border-wash bg-white px-2 py-1.5 text-xs text-ink shadow-sm outline-none ring-ai/15 focus:ring-2"
                       />
                     </label>
@@ -926,6 +1117,7 @@ export function JobsExplorer() {
                         上限
                       </span>
                       <input
+                        key={`salaryLte-${parsed.salaryLte ?? ""}`}
                         name="salaryLte"
                         type="number"
                         inputMode="numeric"
@@ -936,7 +1128,7 @@ export function JobsExplorer() {
                             : ""
                         }
                         title="求人の上限額（salary_max）がこの値以下の求人"
-                        onBlur={() => scheduleFilterApply(true)}
+                        onBlur={() => applySalaryFromForm()}
                         className="w-full min-w-0 rounded-lg border border-wash bg-white px-2 py-1.5 text-xs text-ink shadow-sm outline-none ring-ai/15 focus:ring-2"
                       />
                     </label>
@@ -954,8 +1146,17 @@ export function JobsExplorer() {
                       並び順
                     </span>
                     <select
-                      name="sort"
-                      defaultValue={parsed.sort}
+                      value={parsed.sort}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        const sort: ParsedJobsQuery["sort"] =
+                          v === "salary_high" ||
+                          v === "salary_low" ||
+                          v === "name_asc"
+                            ? v
+                            : "imported_desc";
+                        patchFilter({ sort });
+                      }}
                       className="w-full min-w-0 rounded-lg border border-wash bg-white px-2 py-1.5 text-xs text-ink shadow-sm outline-none ring-ai/15 focus:ring-2"
                     >
                       <option value="imported_desc">取り込みが新しい順</option>
@@ -983,7 +1184,6 @@ export function JobsExplorer() {
           </h2>
           <form
             ref={keywordFormRef}
-            key={`kw-${searchParams.toString()}`}
             className="mt-1.5"
             onSubmit={(e) => {
               e.preventDefault();
@@ -998,10 +1198,15 @@ export function JobsExplorer() {
               <span className="sr-only">キーワード</span>
               <input
                 name="q"
-                defaultValue={parsed.q ?? ""}
+                value={keywordDraft}
                 placeholder="施設名・職種・市区町村など（入力後しばらくで反映）"
                 autoComplete="off"
-                onChange={scheduleKeywordApply}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setKeywordDraft(v);
+                  keywordDraftRef.current = v;
+                  scheduleKeywordApply();
+                }}
                 className="w-full rounded-lg border border-wash bg-paper/50 px-2.5 py-1.5 text-xs text-ink shadow-sm outline-none ring-ai/15 focus:ring-2"
               />
             </label>

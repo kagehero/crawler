@@ -4,6 +4,11 @@ import {
   employmentToCanonical,
   expandEmploymentForQuery,
 } from "@/lib/employment-normalization";
+import {
+  buildJobCategoryGroupMongoCondition,
+  jobCategoryGroupsConfigured,
+  partitionJobCategorySelection,
+} from "@/lib/job-category-groups";
 
 const SOURCES = ["job_medley", "wellme", "unknown"] as const;
 export type JobSource = (typeof SOURCES)[number];
@@ -178,7 +183,26 @@ export function buildJobsMongoFilter(p: ParsedJobsQuery): Record<string, unknown
     }
   }
   if (p.jobCategories && p.jobCategories.length > 0) {
-    if (p.jobCategories.length === 1) {
+    if (jobCategoryGroupsConfigured()) {
+      const { groupLabels, legacyRaw } = partitionJobCategorySelection(
+        p.jobCategories
+      );
+      const groupCond = buildJobCategoryGroupMongoCondition(groupLabels);
+      const orOperands: Record<string, unknown>[] = [];
+      if (groupCond) orOperands.push(groupCond);
+      if (legacyRaw.length > 0) {
+        if (legacyRaw.length === 1) {
+          orOperands.push({ job_category: legacyRaw[0] });
+        } else {
+          orOperands.push({ job_category: { $in: legacyRaw } });
+        }
+      }
+      if (orOperands.length === 1) {
+        parts.push(orOperands[0]!);
+      } else if (orOperands.length > 1) {
+        parts.push({ $or: orOperands });
+      }
+    } else if (p.jobCategories.length === 1) {
       parts.push({ job_category: p.jobCategories[0] });
     } else {
       parts.push({ job_category: { $in: p.jobCategories } });
