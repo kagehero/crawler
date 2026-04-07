@@ -864,11 +864,11 @@ export function JobsExplorer() {
                   <div className="flex min-w-0 flex-col gap-0.5">
                     <span className="text-[10px] font-medium text-sumi/90">
                       職種（複数可）
-                      {jobCategoryGroupsConfigured() ? (
+                      {/* {jobCategoryGroupsConfigured() ? (
                         <span className="block font-normal text-sumi/60">
                           資格求人の条件（グループ別・マスタ参照）
                         </span>
-                      ) : null}
+                      ) : null} */}
                     </span>
                     <details className={FILTER_DROPDOWN_DETAILS}>
                       <summary className={FILTER_DROPDOWN_SUMMARY}>
