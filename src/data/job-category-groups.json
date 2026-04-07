@@ -1,0 +1,361 @@
+{
+  "groups": [
+    {
+      "label": "あん摩マッサージ指圧師",
+      "jobMedleyCategories": [
+        "あん摩マッサージ指圧師"
+      ],
+      "wellmeCategories": [
+        "あん摩マッサージ指圧師"
+      ]
+    },
+    {
+      "label": "エステティシャン/セラピスト",
+      "jobMedleyCategories": [
+        "整体師・セラピスト"
+      ],
+      "wellmeCategories": [
+        "エステティシャン/セラピスト"
+      ]
+    },
+    {
+      "label": "ケアマネジャー",
+      "jobMedleyCategories": [
+        "介護支援専門員(ケアマネジャー)"
+      ],
+      "wellmeCategories": [
+        "ケアマネジャー"
+      ]
+    },
+    {
+      "label": "サービス提供責任者",
+      "jobMedleyCategories": [
+        "サービス提供責任者"
+      ],
+      "wellmeCategories": [
+        "サービス提供責任者"
+      ]
+    },
+    {
+      "label": "サービス管理責任者",
+      "jobMedleyCategories": [
+        "サービス管理責任者"
+      ],
+      "wellmeCategories": [
+        "サービス管理責任者"
+      ]
+    },
+    {
+      "label": "ドライバー/配達員",
+      "jobMedleyCategories": [
+        "送迎ドライバー"
+      ],
+      "wellmeCategories": [
+        "ドライバー/配達員"
+      ]
+    },
+    {
+      "label": "リハビリ職・機能訓練指導員",
+      "jobMedleyCategories": [
+        "リハビリ職・機能訓練指導員"
+      ],
+      "wellmeCategories": []
+    },
+    {
+      "label": "一般事務/管理部門",
+      "jobMedleyCategories": [
+        "事務・受付・管理"
+      ],
+      "wellmeCategories": [
+        "一般事務/管理部門"
+      ]
+    },
+    {
+      "label": "介護職/ヘルパー",
+      "jobMedleyCategories": [
+        "介護職員・ヘルパー"
+      ],
+      "wellmeCategories": [
+        "介護職/ヘルパー"
+      ]
+    },
+    {
+      "label": "作業療法士",
+      "jobMedleyCategories": [
+        "作業療法士"
+      ],
+      "wellmeCategories": [
+        "作業療法士"
+      ]
+    },
+    {
+      "label": "保健師",
+      "jobMedleyCategories": [
+        "保健師"
+      ],
+      "wellmeCategories": [
+        "保健師"
+      ]
+    },
+    {
+      "label": "保育士",
+      "jobMedleyCategories": [
+        "保育士"
+      ],
+      "wellmeCategories": [
+        "保育士"
+      ]
+    },
+    {
+      "label": "保育補助",
+      "jobMedleyCategories": [
+        "保育補助"
+      ],
+      "wellmeCategories": [
+        "保育補助"
+      ]
+    },
+    {
+      "label": "児童指導員/指導員",
+      "jobMedleyCategories": [
+        "児童指導員"
+      ],
+      "wellmeCategories": [
+        "児童指導員/指導員"
+      ]
+    },
+    {
+      "label": "児童発達支援管理責任者",
+      "jobMedleyCategories": [
+        "児童発達支援管理責任者"
+      ],
+      "wellmeCategories": [
+        "児童発達支援管理責任者"
+      ]
+    },
+    {
+      "label": "助産師",
+      "jobMedleyCategories": [
+        "助産師"
+      ],
+      "wellmeCategories": [
+        "助産師"
+      ]
+    },
+    {
+      "label": "医師",
+      "jobMedleyCategories": [],
+      "wellmeCategories": [
+        "医師"
+      ]
+    },
+    {
+      "label": "医療事務/受付",
+      "jobMedleyCategories": [
+        "医療事務"
+      ],
+      "wellmeCategories": [
+        "医療事務/受付"
+      ]
+    },
+    {
+      "label": "営業",
+      "jobMedleyCategories": [
+        "営業・企画"
+      ],
+      "wellmeCategories": [
+        "営業"
+      ]
+    },
+    {
+      "label": "幼稚園教諭",
+      "jobMedleyCategories": [
+        "幼稚園教諭"
+      ],
+      "wellmeCategories": [
+        "幼稚園教諭"
+      ]
+    },
+    {
+      "label": "放課後児童支援員/学童指導員",
+      "jobMedleyCategories": [
+        "放課後児童支援員・学童指導員"
+      ],
+      "wellmeCategories": [
+        "放課後児童支援員/学童指導員"
+      ]
+    },
+    {
+      "label": "整体師",
+      "jobMedleyCategories": [
+        "整体師・セラピスト"
+      ],
+      "wellmeCategories": [
+        "整体師"
+      ]
+    },
+    {
+      "label": "施設スタッフ(清掃・食事配膳・軽作業等)",
+      "jobMedleyCategories": [
+        "施設スタッフ(清掃・食事配膳・軽作業等)"
+      ],
+      "wellmeCategories": []
+    },
+    {
+      "label": "柔道整復師",
+      "jobMedleyCategories": [
+        "柔道整復師"
+      ],
+      "wellmeCategories": [
+        "柔道整復師"
+      ]
+    },
+    {
+      "label": "歯科医師",
+      "jobMedleyCategories": [],
+      "wellmeCategories": [
+        "歯科医師"
+      ]
+    },
+    {
+      "label": "歯科衛生士",
+      "jobMedleyCategories": [],
+      "wellmeCategories": [
+        "歯科衛生士"
+      ]
+    },
+    {
+      "label": "理学療法士",
+      "jobMedleyCategories": [
+        "理学療法士"
+      ],
+      "wellmeCategories": [
+        "理学療法士"
+      ]
+    },
+    {
+      "label": "生活支援員",
+      "jobMedleyCategories": [
+        "生活支援員・世話人・就労支援員"
+      ],
+      "wellmeCategories": [
+        "生活支援員"
+      ]
+    },
+    {
+      "label": "生活相談員",
+      "jobMedleyCategories": [
+        "生活相談員・相談職・ソーシャルワーカー"
+      ],
+      "wellmeCategories": [
+        "生活相談員"
+      ]
+    },
+    {
+      "label": "看護助手",
+      "jobMedleyCategories": [
+        "看護助手"
+      ],
+      "wellmeCategories": [
+        "看護助手"
+      ]
+    },
+    {
+      "label": "看護師/准看護師",
+      "jobMedleyCategories": [
+        "看護師・准看護師"
+      ],
+      "wellmeCategories": [
+        "看護師/准看護師"
+      ]
+    },
+    {
+      "label": "福祉用具専門相談員",
+      "jobMedleyCategories": [
+        "福祉用具専門相談員"
+      ],
+      "wellmeCategories": [
+        "福祉用具専門相談員"
+      ]
+    },
+    {
+      "label": "管理職（介護）",
+      "jobMedleyCategories": [
+        "管理者・施設長・ホーム長"
+      ],
+      "wellmeCategories": [
+        "管理職（介護）"
+      ]
+    },
+    {
+      "label": "臨床工学技士",
+      "jobMedleyCategories": [
+        "臨床工学技士"
+      ],
+      "wellmeCategories": [
+        "臨床工学技士"
+      ]
+    },
+    {
+      "label": "臨床検査技師",
+      "jobMedleyCategories": [
+        "臨床検査技師"
+      ],
+      "wellmeCategories": [
+        "臨床検査技師"
+      ]
+    },
+    {
+      "label": "薬剤師",
+      "jobMedleyCategories": [],
+      "wellmeCategories": [
+        "薬剤師"
+      ]
+    },
+    {
+      "label": "視能訓練士",
+      "jobMedleyCategories": [
+        "視能訓練士"
+      ],
+      "wellmeCategories": [
+        "視能訓練士"
+      ]
+    },
+    {
+      "label": "言語聴覚士",
+      "jobMedleyCategories": [
+        "言語聴覚士"
+      ],
+      "wellmeCategories": [
+        "言語聴覚士"
+      ]
+    },
+    {
+      "label": "診療放射線技師",
+      "jobMedleyCategories": [
+        "診療放射線技師"
+      ],
+      "wellmeCategories": [
+        "診療放射線技師"
+      ]
+    },
+    {
+      "label": "調理師/調理スタッフ",
+      "jobMedleyCategories": [
+        "調理師・調理スタッフ"
+      ],
+      "wellmeCategories": [
+        "調理師/調理スタッフ"
+      ]
+    },
+    {
+      "label": "鍼灸師",
+      "jobMedleyCategories": [
+        "鍼灸師"
+      ],
+      "wellmeCategories": [
+        "鍼灸師"
+      ]
+    }
+  ]
+}
