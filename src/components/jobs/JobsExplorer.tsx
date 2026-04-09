@@ -155,6 +155,21 @@ const FILTER_DROPDOWN_SUMMARY =
   "flex h-9 min-h-9 w-full shrink-0 cursor-pointer list-none items-center justify-between gap-2 px-2.5 text-left text-xs text-ink outline-none [&::-webkit-details-marker]:hidden hover:bg-paper/40";
 
 /** オーバーレイ内のチェック一覧ラッパー（高さは件数に応じ max-h まで） */
+function CloseDropdownBtn() {
+  return (
+    <button
+      type="button"
+      className="ml-auto shrink-0 rounded-lg px-2.5 py-0.5 text-[10px] font-semibold text-ai hover:bg-ai/10 active:scale-95"
+      onClick={(e) => {
+        const details = (e.currentTarget as HTMLElement).closest("details");
+        if (details) details.removeAttribute("open");
+      }}
+    >
+      この条件で設定
+    </button>
+  );
+}
+
 function FilterDropdownPanel({
   children,
   ariaLabel,
@@ -565,7 +580,7 @@ export function JobsExplorer() {
                         <FilterDropdownChevron />
                       </summary>
                       <FilterDropdownPanel ariaLabel="都道府県">
-                        <div className="border-b border-wash/80 bg-paper/30 px-2 py-1">
+                        <div className="flex items-center gap-2 border-b border-wash/80 bg-paper/30 px-2 py-1">
                           <button
                             type="button"
                             className={SELECT_ALL_BTN}
@@ -594,6 +609,7 @@ export function JobsExplorer() {
                               ? "全て解除"
                               : "全て選択"}
                           </button>
+                          <CloseDropdownBtn />
                         </div>
                         <div className={FILTER_CHECKBOX_LIST}>
                           {prefectureOptions.map((pr) => (
@@ -645,7 +661,7 @@ export function JobsExplorer() {
                           <FilterDropdownChevron />
                         </summary>
                         <FilterDropdownPanel ariaLabel="市区町村">
-                          <div className="border-b border-wash/80 bg-paper/30 px-2 py-1">
+                          <div className="flex items-center gap-2 border-b border-wash/80 bg-paper/30 px-2 py-1">
                             <button
                               type="button"
                               className={SELECT_ALL_BTN}
@@ -663,6 +679,7 @@ export function JobsExplorer() {
                                 ? "全て解除"
                                 : "全て選択"}
                             </button>
+                            <CloseDropdownBtn />
                           </div>
                           <div className={FILTER_CHECKBOX_LIST}>
                             {cityOptions.map((c) => (
@@ -743,7 +760,7 @@ export function JobsExplorer() {
                         <FilterDropdownChevron />
                       </summary>
                       <FilterDropdownPanel ariaLabel="媒体名">
-                        <div className="border-b border-wash/80 bg-paper/30 px-2 py-1">
+                        <div className="flex items-center gap-2 border-b border-wash/80 bg-paper/30 px-2 py-1">
                           <button
                             type="button"
                             className={SELECT_ALL_BTN}
@@ -763,6 +780,7 @@ export function JobsExplorer() {
                               ? "全て解除"
                               : "全て選択"}
                           </button>
+                          <CloseDropdownBtn />
                         </div>
                         <div className={FILTER_CHECKBOX_LIST}>
                           {(
@@ -813,7 +831,7 @@ export function JobsExplorer() {
                         <FilterDropdownChevron />
                       </summary>
                       <FilterDropdownPanel ariaLabel="雇用形態">
-                        <div className="border-b border-wash/80 bg-paper/30 px-2 py-1">
+                        <div className="flex items-center gap-2 border-b border-wash/80 bg-paper/30 px-2 py-1">
                           <button
                             type="button"
                             className={SELECT_ALL_BTN}
@@ -839,6 +857,7 @@ export function JobsExplorer() {
                               ? "全て解除"
                               : "全て選択"}
                           </button>
+                          <CloseDropdownBtn />
                         </div>
                         <div className={FILTER_CHECKBOX_LIST}>
                           {employmentOptions.map((e) => (
@@ -888,7 +907,7 @@ export function JobsExplorer() {
                         <FilterDropdownChevron />
                       </summary>
                       <FilterDropdownPanel ariaLabel="職種">
-                        <div className="border-b border-wash/80 bg-paper/30 px-2 py-1">
+                        <div className="flex items-center gap-2 border-b border-wash/80 bg-paper/30 px-2 py-1">
                           <button
                             type="button"
                             className={SELECT_ALL_BTN}
@@ -914,6 +933,7 @@ export function JobsExplorer() {
                               ? "全て解除"
                               : "全て選択"}
                           </button>
+                          <CloseDropdownBtn />
                         </div>
                         <div className={FILTER_CHECKBOX_LIST}>
                           {jobCategoryOptions.map((c) => (
@@ -937,8 +957,16 @@ export function JobsExplorer() {
                     </details>
                   </div>
                   <div className="flex min-w-0 flex-col gap-0.5">
-                    <span className="text-[10px] font-medium text-sumi/90">
-                      サービス種別（複数可・表示に含む）
+                    <span className="inline-flex items-center gap-1 text-[10px] font-medium text-sumi/90">
+                      サービス種別（複数可）
+                      <span className="group relative inline-block">
+                        <span className="cursor-help select-none rounded-full border border-sumi/30 px-1 text-[9px] font-bold text-sumi/50 hover:border-sumi/60 hover:text-sumi/80">
+                          ⚠
+                        </span>
+                        <span className="pointer-events-none absolute bottom-full left-0 z-50 mb-1 w-56 rounded-lg border border-wash bg-ink/95 px-2.5 py-2 text-[10px] leading-relaxed text-white opacity-0 shadow-lg transition-opacity duration-150 group-hover:opacity-100">
+                          各媒体毎に入力・選択定義が大きく異なる為、グルーピングが出来ませんでした。つきましては本項目の利用及び選択は推奨致しません。参考程度にご利用下さい。
+                        </span>
+                      </span>
                     </span>
                     <details className={FILTER_DROPDOWN_DETAILS}>
                       <summary className={FILTER_DROPDOWN_SUMMARY}>
@@ -958,7 +986,7 @@ export function JobsExplorer() {
                         <FilterDropdownChevron />
                       </summary>
                       <FilterDropdownPanel ariaLabel="サービス種別">
-                        <div className="border-b border-wash/80 bg-paper/30 px-2 py-1">
+                        <div className="flex items-center gap-2 border-b border-wash/80 bg-paper/30 px-2 py-1">
                           <button
                             type="button"
                             className={SELECT_ALL_BTN}
@@ -984,6 +1012,7 @@ export function JobsExplorer() {
                               ? "全て解除"
                               : "全て選択"}
                           </button>
+                          <CloseDropdownBtn />
                         </div>
                         <div className={FILTER_CHECKBOX_LIST}>
                           {serviceTypeOptions.map((c) => (
@@ -1039,7 +1068,7 @@ export function JobsExplorer() {
                         <FilterDropdownChevron />
                       </summary>
                       <FilterDropdownPanel ariaLabel="支給区分">
-                        <div className="border-b border-wash/80 bg-paper/30 px-2 py-1">
+                        <div className="flex items-center gap-2 border-b border-wash/80 bg-paper/30 px-2 py-1">
                           <button
                             type="button"
                             className={SELECT_ALL_BTN}
@@ -1066,6 +1095,7 @@ export function JobsExplorer() {
                               ? "全て解除"
                               : "全て選択"}
                           </button>
+                          <CloseDropdownBtn />
                         </div>
                         <div className={FILTER_CHECKBOX_LIST}>
                           {PAYMENT_TYPE_OPTIONS.map((pm) => (

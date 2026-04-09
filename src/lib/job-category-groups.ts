@@ -1,5 +1,6 @@
 import raw from "@/data/job-category-groups.json";
 import { expandJobMedleyCategoryForIn } from "@/lib/job-medley-category-canonical";
+import { expandWellmeCategoryForIn } from "@/lib/wellme-category-canonical";
 
 export type JobCategoryGroupRow = {
   /** 画面の選択肢（Excel F 列に相当） */
@@ -94,8 +95,9 @@ export function buildJobCategoryGroupMongoCondition(
     g.jobMedleyCategories.forEach((x) => medley.add(x));
     g.wellmeCategories.forEach((x) => wellme.add(x));
   }
-  /** Excel B 列の表記とジョブメドレーが保存する `job_category` が一致しない場合があるため正規ラベルへ展開 */
+  /** Excel B/C 列の表記は保存される job_category と異なることがあるため正規ラベルへ展開 */
   const medleyForIn = expandJobMedleyCategoryForIn([...medley]);
+  const wellmeForIn = expandWellmeCategoryForIn([...wellme]);
   const parts: Record<string, unknown>[] = [];
   if (medleyForIn.length > 0) {
     parts.push({
@@ -103,13 +105,13 @@ export function buildJobCategoryGroupMongoCondition(
       job_category: { $in: medleyForIn },
     });
   }
-  if (wellme.size > 0) {
+  if (wellmeForIn.length > 0) {
     parts.push({
       source: "wellme",
-      job_category: { $in: [...wellme] },
+      job_category: { $in: wellmeForIn },
     });
   }
-  const unknownUnion = new Set([...medleyForIn, ...wellme]);
+  const unknownUnion = new Set([...medleyForIn, ...wellmeForIn]);
   if (unknownUnion.size > 0) {
     parts.push({
       source: "unknown",
