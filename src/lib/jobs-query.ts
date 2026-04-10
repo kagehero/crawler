@@ -233,12 +233,33 @@ export function buildJobsMongoFilter(p: ParsedJobsQuery): Record<string, unknown
     }
   }
 
-  /** 下限・上限はいずれも円単位。下限＝求人の下限額がこの値以上、上限＝求人の上限額がこの値以下 */
+  /** 下限・上限はいずれも円単位。下限＝求人の下限額がこの値以上 */
   if (p.salaryGte !== undefined) {
     parts.push({ salary_min: { $gte: p.salaryGte } });
   }
+  /**
+   * 上限:
+   * - salary_max が正の値で入っている求人は salary_max で比較
+   * - 「◯円〜」などで salary_max=0/未設定の求人は salary_min で比較
+   */
   if (p.salaryLte !== undefined) {
-    parts.push({ salary_max: { $lte: p.salaryLte } });
+    parts.push({
+      $or: [
+        { salary_max: { $gt: 0, $lte: p.salaryLte } },
+        {
+          $and: [
+            {
+              $or: [
+                { salary_max: 0 },
+                { salary_max: null },
+                { salary_max: { $exists: false } },
+              ],
+            },
+            { salary_min: { $lte: p.salaryLte } },
+          ],
+        },
+      ],
+    });
   }
 
   if (p.q) {
