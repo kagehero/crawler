@@ -285,7 +285,7 @@ export function jobsSortSpec(
 ): Record<string, 1 | -1> {
   switch (sort) {
     case "salary_high":
-      return { salary_max: -1, importedAt: -1 };
+      return { salary_min: -1, importedAt: -1 };
     case "salary_low":
       return { salary_min: 1, importedAt: -1 };
     case "name_asc":

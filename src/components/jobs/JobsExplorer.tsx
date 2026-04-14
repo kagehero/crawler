@@ -556,7 +556,7 @@ export function JobsExplorer() {
                   勤務地
                 </legend>
                 <p className="mb-1.5 text-[10px] leading-snug text-sumi/70">
-                検索候補は貴社展開エリアに合わせています。以下（参考）を参照下さい。
+                  検索候補は貴社施設展開エリアに合わせています。以下（参考）を参照下さい。
                 </p>
                 <div className={FILTER_FIELD_GRID}>
                   <div className="flex min-w-0 flex-col gap-0.5">
@@ -1039,9 +1039,7 @@ export function JobsExplorer() {
               </fieldset>
 
               <fieldset className="min-h-0 rounded-lg border border-wash bg-white/95 px-2.5 py-2 shadow-sm sm:px-3">
-                <legend className="text-[11px] font-semibold text-ink">
-                  給与（CSV の支給区分・金額）
-                </legend>
+                <legend className="text-[11px] font-semibold text-ink">給与</legend>
                 <p className="mb-1.5 text-[10px] leading-snug text-sumi/70">
                   月給・時給・日給で絞り込みます。
                 </p>
@@ -1157,7 +1155,7 @@ export function JobsExplorer() {
                             ? String(parsed.salaryLte)
                             : ""
                         }
-                        title="求人の上限額（salary_max）がこの値以下の求人"
+                        title="上限額がある求人はsalary_max、〇円〜求人はsalary_minを使ってこの値以下で絞り込み"
                         onBlur={() => applySalaryFromForm()}
                         className="w-full min-w-0 rounded-lg border border-wash bg-white px-2 py-1.5 text-xs text-ink shadow-sm outline-none ring-ai/15 focus:ring-2"
                       />
@@ -1167,14 +1165,9 @@ export function JobsExplorer() {
               </fieldset>
 
               <fieldset className="min-h-0 rounded-lg border border-wash bg-white/95 px-2.5 py-2 shadow-sm sm:px-3">
-                <legend className="text-[11px] font-semibold text-ink">
-                  一覧の表示
-                </legend>
+                <legend className="text-[11px] font-semibold text-ink">表示形式</legend>
                 <div className="mt-0.5 max-w-md">
                   <label className="flex min-w-0 flex-col gap-0.5">
-                    <span className="text-[10px] font-medium text-sumi/90">
-                      並び順
-                    </span>
                     <select
                       value={parsed.sort}
                       onChange={(e) => {
