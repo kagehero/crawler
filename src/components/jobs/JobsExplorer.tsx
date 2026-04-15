@@ -214,6 +214,37 @@ const KEYWORD_DEBOUNCE_MS = 450;
 const SELECT_ALL_BTN =
   "rounded px-2 py-0.5 text-[10px] font-medium text-ai hover:bg-ai/10";
 
+/** クライアント優先の職種選択肢（先頭固定） */
+const PRIORITY_JOB_CATEGORY_LABELS: readonly string[] = [
+  "介護職/ヘルパー",
+  "看護師/准看護師",
+  "看護助手",
+  "管理職（介護）",
+  "サービス管理責任者",
+  "サービス提供責任者",
+  "ケアマネジャー",
+  "福祉用具専門相談員",
+  "施設スタッフ(清掃・食事配膳・軽作業等)",
+  "調理師/調理スタッフ",
+  "生活支援員",
+  "生活相談員",
+  "理学療法士",
+  "作業療法士",
+  "リハビリ職・機能訓練指導員",
+  "医療事務/受付",
+  "一般事務/管理部門",
+];
+
+function prioritizeJobCategoryOptions(options: string[]): string[] {
+  if (options.length === 0) return options;
+  const set = new Set(options);
+  const pinned = PRIORITY_JOB_CATEGORY_LABELS.filter((x) => set.has(x));
+  if (pinned.length === 0) return options;
+  const pinnedSet = new Set(pinned);
+  const rest = options.filter((x) => !pinnedSet.has(x));
+  return [...pinned, ...rest];
+}
+
 /** 多ページ時は両端＋現在付近を表示し、飛びは … で示す */
 function getPaginationItems(
   current: number,
@@ -282,8 +313,10 @@ export function JobsExplorer() {
   }, [parsed.prefectures]);
 
   const jobCategoryOptions = useMemo(() => {
-    if (jobCategoryGroupsConfigured()) return jobCategoryGroupLabels();
-    return mergeBySourceLists(options?.jobCategoriesBySource, parsed.sources);
+    const base = jobCategoryGroupsConfigured()
+      ? jobCategoryGroupLabels()
+      : mergeBySourceLists(options?.jobCategoriesBySource, parsed.sources);
+    return prioritizeJobCategoryOptions(base);
   }, [options?.jobCategoriesBySource, parsed.sources]);
 
   const serviceTypeOptions = useMemo(() => {
